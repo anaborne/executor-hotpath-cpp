@@ -1,0 +1,57 @@
+---
+# Disabled checks, and why. The three cppcoreguidelines-pro-bounds and reinterpret-cast checks ban
+# the operations a wire-format reader is made of. The magic-number checks fire on the protocol's
+# own constants, the 4-byte length prefix and the 64 KiB cap, which are the specification and not
+# a smell. easily-swappable-parameters fires on every (const uint8_t* data, size_t len) signature.
+# trailing-return-type and identifier-length are style preferences that would rewrite the codebase.
+# avoid-pragma-once wants include guards; every compiler this builds on supports the pragma and
+# guards are a name collision waiting to happen.
+Checks: >
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -cert-err58-cpp,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-vararg,
+  -misc-non-private-member-variables-in-classes,
+  -modernize-avoid-c-arrays,
+  -modernize-use-trailing-return-type,
+  -portability-avoid-pragma-once,
+  -readability-identifier-length,
+  -readability-magic-numbers
+
+WarningsAsErrors: '*'
+
+HeaderFilterRegex: '.*/(include|src|tests)/.*\.hpp$'
+ExcludeHeaderFilterRegex: '.*/_deps/.*'
+
+FormatStyle: file
+
+CheckOptions:
+  readability-function-cognitive-complexity.Threshold: '40'
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+  readability-identifier-naming.ConstexprVariableCase: CamelCase
+  readability-identifier-naming.ConstexprVariablePrefix: 'k'
+  readability-identifier-naming.GlobalConstantCase: CamelCase
+  readability-identifier-naming.GlobalConstantPrefix: 'k'
+  performance-unnecessary-value-param.AllowedTypes: 'std::string_view;std::span'

@@ -1,0 +1,47 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+ContinuationIndentWidth: 4
+
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: NextLine
+EmptyLineBeforeAccessModifier: LogicalBlock
+SeparateDefinitionBlocks: Always
+
+FixNamespaceComments: true
+NamespaceIndentation: None
+
+# Standard headers, then hotpath/, then the rest. A public header that relies on a transitive
+# include then fails to compile instead of being propped up by include order.
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<[a-z_]+>$'
+    Priority: 1
+  - Regex: '^["<]hotpath/'
+    Priority: 2
+  - Regex: '^<catch2/'
+    Priority: 4
+  - Regex: '^<'
+    Priority: 3
+  - Regex: '.*'
+    Priority: 5
+
+InsertNewlineAtEOF: true
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+LineEnding: LF
+Standard: c++20
