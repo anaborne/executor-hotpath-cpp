@@ -41,6 +41,9 @@ records. End-to-end `wake_send` as the Python harness measures it, from the poll
 to the poller reading the ack back. The signer, RSA-PSS over `timestamp + method + path`, in both
 languages. A cpp-to-cpp round trip.
 
+The `wake_send` sentence above is wrong about where the span ends, and section 9's fifth correction
+has the details. It ends at `drain()` and never waits for an ack.
+
 Reported as p50, p90, p99 over n=2000, from a sorted vector. No histogram and no HdrHistogram
 dependency; at n=2000 a sorted vector is exact and the dependency buys nothing.
 
@@ -170,3 +173,40 @@ fire in both, so the span itself is unaffected, but the two processes are not eq
 the C++ client in `bench/poller_client.cpp` writes one frame and blocks for its ack, which is a
 different span. It is reported as `roundtrip` and never in a `wake_send` column. The comparable
 number out of that configuration is `wake_recv`, which both executors record the same way.
+
+**2026-08-30, fifth.** Two errors about `wake_send`, one in this document and one in the harness,
+found while raising the wake iteration count from 300 to 2000 and recorded here rather than fixed
+quietly.
+
+Section 3 says `wake_send` runs "from the poller's `put_nowait` to the poller reading the ack back."
+It does not. `_write_loop` stamps the end of the span after `await writer.drain()` and the ack is
+read on a separate task that the span never waits for. The description was written from the design
+rather than from the code, and it survived into this step because it was carried forward without
+being checked against `poller_client.py`. The span is enqueue to write to drain.
+
+The harness error is larger. `send_wake` drops onto a full queue rather than blocking, deliberately,
+because a wake channel that blocked its caller would block the fire path. The benchmark's send loop
+was synchronous with no yields, so every wake landed at once: at 300 iterations they fit inside the
+1000-deep queue, and at 2200 more than half were dropped and the run hung until its timeout. The
+loop now yields after each send and the writer holds the queue at a depth of one or two.
+
+That fixes the run and it also changes what the number means, which matters more. `wake_send` starts
+at `sent_at_ns`, stamped before the enqueue, and `poller_client.py` documents that the duration
+"includes any time spent waiting in this queue as well as the socket write itself." Under a burst
+that queue term dominates. The published py-to-py figure of `wake_send` p50 0.5905ms at n=300 is
+therefore mostly the wait behind the 299 messages ahead of it, not the socket path, and while
+diagnosing this on a loaded machine the same code with a shallow queue came back around 0.04ms. That
+is an observation made while debugging and not a reported figure; the reported one comes off the
+Mac at step 7 like every other.
+
+Nothing here says the production metric was wrong. It measured what its own docstring says it
+measures, and `executor_server.py` records live wake inter-arrival at 1186ms, so a production queue
+is empty and `wake_send` there is the shallow-queue number. What was wrong is that a burst-shaped
+benchmark reported a queue-depth reading in a column labelled end-to-end latency, and this document
+pre-registered an expectation about that column in section 6 without noticing.
+
+Consequences. The three rows already in `history.csv` are not comparable to anything produced after
+today on `wake_send` specifically, on top of already not being comparable by machine. Section 6's
+expectation that "`wake_send` barely moves" was reasoning about a span that includes a Python queue
+hop on either side, and with the queue held shallow that reasoning still holds but the magnitudes it
+was pitched against do not. RESULTS.md leads with this.

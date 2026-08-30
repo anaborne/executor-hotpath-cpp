@@ -249,7 +249,9 @@ reason that has nothing to do with what either implementation costs.
 
 **`roundtrip` is not `wake_send`.** `poller_client.py` is async, queues, and reads acks on a
 separate task; its `wake_send` span runs from the caller's `sent_at_ns` to the end of `drain()` and
-never waits for an ack. `bench/poller_client.cpp` writes one frame and blocks for its ack. The two
+never waits for an ack. That span also includes however long the message sat in the poller's queue,
+which `send_wake`'s docstring states and which BENCHMARK.md section 9 records as the reason the
+harness now yields after every send. `bench/poller_client.cpp` writes one frame and blocks for its ack. The two
 are not the same measurement and the C++ number is never written into a `wake_send` column. The
 comparable span out of the cpp-to-cpp configuration is `wake_recv`, which both executors record the
 same way and around the same three operations.
