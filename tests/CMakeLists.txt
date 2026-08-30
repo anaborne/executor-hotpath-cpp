@@ -9,6 +9,7 @@ add_executable(hotpath_tests
     test_pricing.cpp
     test_protocol.cpp
     test_protocol_golden.cpp
+    test_signer.cpp
     test_spsc_ring.cpp
     test_telemetry.cpp
 )
@@ -20,8 +21,12 @@ target_include_directories(hotpath_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # Read at run time rather than embedded, so regenerating a golden frame does not recompile the
 # suite and a diff on a frame file is a diff on the thing being asserted.
+# The signing half of the cross-check runs outside the build: the test writes what it signed here
+# and `generate_signing_fixture.py --verify-cpp` reads it back. Under the build tree, so switching
+# presets does not hand the verifier the other preset's leftovers.
 target_compile_definitions(hotpath_tests
     PRIVATE HOTPATH_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
+            HOTPATH_SIGNER_CROSS_CHECK_DIR="${CMAKE_BINARY_DIR}/signer_cross_check"
 )
 
 target_link_libraries(hotpath_tests
@@ -30,6 +35,7 @@ target_link_libraries(hotpath_tests
         hotpath::warnings
         Catch2::Catch2WithMain
         SQLite::SQLite3
+        OpenSSL::Crypto
 )
 
 # PRE_TEST rather than the default POST_BUILD. Discovery runs the freshly built binary, so under
