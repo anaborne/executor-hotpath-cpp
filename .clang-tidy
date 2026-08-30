@@ -8,6 +8,10 @@
 # (const uint8_t* data, size_t len) signature. trailing-return-type and identifier-length are style
 # preferences that would rewrite the codebase. avoid-pragma-once wants include guards; every
 # compiler this builds on supports the pragma and guards are a name collision waiting to happen.
+# misc-include-cleaner names the file a symbol is physically declared in, which for POSIX is the
+# libc's internal header and differs by platform: with <poll.h> included it asks macOS for
+# <sys/poll.h>, and adding that would leave <poll.h> unused on glibc, so the lint job and the local
+# run cannot both be satisfied by one set of includes.
 Checks: >
   bugprone-*,
   cert-*,
@@ -29,6 +33,7 @@ Checks: >
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,
   -cppcoreguidelines-pro-type-reinterpret-cast,
   -cppcoreguidelines-pro-type-vararg,
+  -misc-include-cleaner,
   -misc-non-private-member-variables-in-classes,
   -modernize-avoid-c-arrays,
   -modernize-use-trailing-return-type,
