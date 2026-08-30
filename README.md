@@ -1,104 +1,143 @@
 # executor-hotpath-cpp
 
+[![CI](https://github.com/anaborne/executor-hotpath-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/anaborne/executor-hotpath-cpp/actions/workflows/ci.yml)
+
 The executor process from
 [prediction-market-infra](https://github.com/anaborne/prediction-market-infra), rewritten in C++20
-against the same wire protocol, so the Python poller can drive either one and the two can be timed
-against each other in the same run on the same machine.
+against the same wire protocol, so the Python poller drives either one and the two are timed against
+each other in the same run on the same machine.
+
+The Python poller drove this executor across 4400 frames with `poller_client.py` unmodified, every
+frame accepted and no telemetry row dropped. Executor-side `wake_recv` dropped by a factor of 2.4 to
+5.0 depending on the event loop and the percentile, 0.0045ms to 0.0016ms at p50 under uvloop. The
+caveat is that the two configurations differ by more than language: the Python baseline runs the
+poller and the executor on one event loop and the C++ configuration spawns a second process, so
+every ratio here is an upper bound on what the rewrite bought. [`RESULTS.md`](RESULTS.md) is where
+those numbers live and it carries the confound in full.
+
+The pre-registered expectation in [`BENCHMARK.md`](BENCHMARK.md) section 6 was written before any
+code existed, and it was wrong in both halves. It predicted `wake_recv` would fall by roughly an
+order of magnitude, and 2.4x to 5.0x is not that. It predicted end-to-end `wake_send` could not move
+because the span brackets the executor with Python work on both sides, and `wake_send` halved,
+because the span ends at `drain()` and never contained the executor at all.
 
 The Python side is a published reference implementation, not a running system.
-`prediction-market-infra` is an extraction from a private trading bot, and that bot was shut down
-on 2026-08-29 when the last surviving strategy failed its pre-registered replication. The
-infrastructure was published; the trading was not continued. The comparison does not rest on it
-still trading. It is two implementations of one wire protocol, timed on one machine in one run,
-with `poller_client.py` driving both unchanged. What is not on offer is a production A/B, and no
-number here will be presented as one.
+`prediction-market-infra` is an extraction from a private trading bot, and that bot was shut down on
+2026-08-29 when the last surviving strategy failed its pre-registered replication. What is on offer
+is two implementations of one wire protocol, timed on one machine in one run. What is not on offer
+is a production A/B, and no number here will be presented as one.
 
-## Status: measured. The pre-registered expectation was wrong in both halves.
+## The contract test
 
-[`BENCHMARK.md`](BENCHMARK.md) section 6 was written before any code existed and predicted that
-executor-side `wake_recv` would drop by roughly an order of magnitude and that end-to-end
-`wake_send` would barely move. Neither held. `wake_recv` dropped by 2.4x to 5.0x depending on the
-event loop and the percentile, and `wake_send` halved when the prediction was that it could not
-move at all, because the span does not contain the executor.
+The frames the C++ is tested against were produced by running the Python, not by reading it. Ten of
+them: five `WakeMessage` shapes, the v1 through v3 legacy frames, and both `WakeAck` statuses. The
+C++ suite asserts field-for-field equality against each, and the legacy three assert that every
+field added since arrives at its Python default, two of which are refusals rather than permissions.
+The rejection cases are separate, in `test_protocol.cpp` and `test_executor.cpp`: an oversize length
+prefix closes the connection, and a malformed body produces a `rejected` ack carrying the Python's
+own reason string.
 
-A third measurement turned out not to compare what it was built to compare. The signer row is 2.8x
-in this port's favour and it is not a language result: `cryptography` bundles OpenSSL 4.0.2 and this
-port links Homebrew's OpenSSL 3.6.3, so the row compares two library builds. `openssl speed` against
-that Homebrew build reports 0.334ms per signature and this port measures 0.3297ms, meaning the C++
-wrapper costs nothing and contributes nothing to the gap.
+The encoder is byte identical to `orjson.dumps` over `WakeMessage` and `WakeAck`. That is a stricter
+claim than valid JSON, because `orjson` serializes a dataclass in field-declaration order, so the
+wire key order is the attribute order and any reordering is a protocol change.
 
-[`RESULTS.md`](RESULTS.md) has the tables, the confound between py-to-py being one process and
-py-to-cpp being two, and what would have to change for a cleaner answer.
+Float formatting is where a general-purpose C++ serializer would diverge. `orjson` writes shortest
+round-trip digits in fixed notation for a decimal exponent in [-5, 16) and scientific outside it, so
+`1e15` is `1000000000000000.0` and `1e16` is `1e+16`. `tests/golden/doubles.tsv` pins 1,000 values
+against `orjson`'s own output. Price snapping goes through `round_half_even`, since Python's
+`round()` is half-to-even and `std::round` is half-away-from-zero, and 424 cases the Python produced
+hold it there.
+
+[`PORT-FIDELITY.md`](PORT-FIDELITY.md) records what is identical, the six places this decoder is
+stricter than Python's, and the evidence behind each.
+
+```bash
+uv run --with orjson python tests/golden/generate_golden.py --infra ../prediction-market-infra
+```
+
+Nothing in CI regenerates the fixtures. They are committed, and changing one is a deliberate act
+with a diff to review. Regenerating against `prediction-market-infra` at `e3fd937` under Python
+3.14.7 reproduced all ten frames, all 1,000 doubles and all 424 snap cases byte for byte.
+
+## Results
+
+Run 2026-08-30, one machine, one session. Executor-side `wake_recv` in milliseconds, under uvloop,
+n=2000 after 200 discarded warm-up iterations:
+
+| Configuration | p50 | p90 | p99 |
+|---|---|---|---|
+| py-to-py | 0.0045 | 0.0056 | 0.0062 |
+| py-to-cpp | 0.0016 | 0.0019 | 0.0026 |
+| cpp-to-cpp | 0.0019 | 0.0020 | 0.0026 |
+
+Those bottom two rows are one executor measured from two different clients, and they should agree,
+because the executor does not know what is on the other end of the socket. Adding the asyncio-driven
+run, the same binary reports 1.2us, 1.6us and 1.9us across three clients. The 0.7us spread is the
+resolution of this measurement at this scale, and any claim about `wake_recv` finer than "between 1
+and 2 microseconds" is reading noise.
+
+Inside the C++ executor the span decomposes cleanly. `decode` is 84% of `wake_recv`, `encode_ack` is
+5%, and the remainder is the ack's `send`. The decoder is the only place with anything in it.
+
+The signer, benchmarked in the same session, turned out not to compare what it was built to
+compare. That row is 2.8x in this port's favour and it is not a language result: `cryptography`
+bundles OpenSSL 4.0.2 and this port links Homebrew's OpenSSL 3.6.3, so the row compares two library
+builds.
+`openssl speed rsa2048` against that Homebrew build lands within 2% of what this port's signer
+measures, so the C++ wrapper costs nothing and contributes nothing to the gap. Binding overhead was
+ruled out with an experiment rather than an argument. The row stays in the table because removing a
+measurement that came out inconvenient is worse than publishing it with its meaning corrected.
+
+[`RESULTS.md`](RESULTS.md) has the `wake_send` and component tables, the disclosed deviation from
+the pre-registered method, and the three things that would have to change for a cleaner answer.
+Raw rows are `bench_history.csv` here and `benchmarks/history.csv` in `prediction-market-infra`.
 
 ## What is here
 
-`WakeMessage`, `WakeAck`, the length-prefixed frame codec, a JSON layer written against orjson's
-output rather than against the JSON grammar alone, the executor server from `accept` to the point
-where the Python calls `dispatch()`, the telemetry path that carries `wake_recv` off that server
-and into SQLite, the Kalshi request signer, and the benchmark harness on both sides of the wire.
-
-The Python poller drove the C++ executor across 4400 frames with no change to `poller_client.py`,
-every frame accepted and no telemetry row dropped. That was the protocol claim, and it holds.
-
-[`BENCHMARK.md`](BENCHMARK.md) records what would be measured, how, and what was expected, written
-before any of it existed and corrected at the bottom rather than edited above.
-
-The encoder is byte identical to `orjson.dumps` over these two dataclasses, and ten frames produced
-by running the Python itself hold it there. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records what is
-identical, the six places this decoder is stricter than Python's, and the evidence behind each,
-because every one of those was observed by running the Python and not inferred from its source.
-
-orjson's float formatting is where a general-purpose C++ serializer differs. It writes shortest
-round-trip digits in fixed notation for a decimal exponent in [-5, 16) and scientific outside it, so
-`1e15` is `1000000000000000.0` and `1e16` is `1e+16`. `tests/golden/doubles.tsv` pins 1,000 values
-against orjson's own output.
+`WakeMessage`, `WakeAck`, the length-prefixed frame codec with its 64 KiB cap, the JSON layer, the
+executor server from `accept` to the point where the Python calls `dispatch()`, the telemetry path
+that carries `wake_recv` off that server and into SQLite, the Kalshi request signer, and the
+benchmark harness on both sides of the wire.
 
 The server is one thread on one Unix domain socket, and the read loop runs in the Python's order:
 read the body, stamp, decode, ack, fire. The stamp comes after the read returns, since the read
 blocks until a frame arrives and a stamp taken ahead of it measures the gap between wakes. The ack
-goes out before the fire, so a dispatch never lands inside the span the poller measures. Price
-snapping matches Python's half-to-even `round()` against 424 cases the Python produced.
+goes out before the fire, so a dispatch never lands inside the span the poller measures.
 
-## Telemetry
+### Telemetry
 
 `--telemetry-db` writes `latency_events` rows into the same SQLite file and the same columns
 `benchmarks/latency_bench.py` queries, so the Python harness reads the C++ executor's numbers with
 its own `SELECT` unchanged. A `record` call copies the row into a fixed-size ring and returns; one
 writer thread owns the connection and commits in batches of 500.
 
-Nothing on the read loop can wait for a write. The ring holds 8192 rows, pushing to a full one
-drops the row rather than blocking, and the four counters are printed at exit next to the server's:
+Nothing on the read loop can wait for a write. The ring holds 8192 rows, pushing to a full one drops
+the row rather than blocking, and the four counters are printed at exit next to the server's:
 
 ```
 frames=5 accepted=5 rejected=0 fired=5 refused_price=0 refused_kill_switch=0
 telemetry rows_written=5 dropped_ring_full=0 dropped_oversized_id=0 dropped_write_failed=0
 ```
 
-A writer that fell behind shows up as `rows_written` short of `frames`. That is why the drops are
-counted rather than logged: a log line is something to go looking for, and a run that silently
+A writer that fell behind shows up as `rows_written` short of `frames`. The drops are counted rather
+than logged because a log line is something to go looking for, and a run that silently
 under-reported would look like a run that was quiet.
 
-Those five wakes came from the Python's own `protocol.py`. Opening the file the C++ wrote with the
-Python's own `TelemetryDB.initialize()` afterwards fills in the seven tables the executor does not
-write and leaves all five rows in place.
+Opening a file the C++ wrote with the Python's own `TelemetryDB.initialize()` afterwards fills in
+the seven tables the executor does not write and leaves every row in place.
 
-```bash
-./build/dev/bin/executor_hotpath --socket /tmp/executor.sock --kill-switch /tmp/halt \
-    --telemetry-db /tmp/telemetry.db
-```
+### Signer
 
-## Signer
-
-RSA-PSS over `timestamp + method + path`, MGF1 and the digest both SHA-256, salt length equal to
-the digest length, base64 out, through OpenSSL 3's EVP interface. Kalshi's published construction,
-and `auth/signer.py` is the specification for it.
+RSA-PSS over `timestamp + method + path`, MGF1 and the digest both SHA-256, salt length equal to the
+digest length, base64 out, through OpenSSL 3's EVP interface. Kalshi's published construction, and
+`auth/signer.py` is the specification for it.
 
 PSS salts randomly, so signing one message twice with one key gives two different valid signatures
 and there is no golden signature to compare bytes against. The check runs both ways instead.
 `tests/golden/signing` holds five signatures the Python produced against a throwaway RSA-2048 key
-and the public key that verifies them, and the test suite verifies each one against the message
-this port builds. A signature carrying OpenSSL's default salt, 222 bytes rather than 32, fails that
-same verifier, which is what keeps the assertion from being vacuous.
+and the public key that verifies them, and the suite verifies each against the message this port
+builds. A signature carrying OpenSSL's default salt, 222 bytes rather than 32, fails that same
+verifier, which is what keeps the assertion from being vacuous.
 
 The other direction is a command rather than a gate, because gating it would put `cryptography` on
 all three CI runners to check a value that is different every run:
@@ -107,15 +146,66 @@ all three CI runners to check a value that is different every run:
 uv run python tests/golden/generate_signing_fixture.py --verify-cpp build/dev/signer_cross_check
 ```
 
-```
-5 C++ signatures verified against the Python's own PSS parameters
-```
-
 No private key is committed. Both sides generate one into a temporary directory and only the public
-half is written out. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records the two differences and the one
-caveat the fixture does not close.
+half is written out.
 
-## Benchmarks
+## What was deliberately not built
+
+The poller, the matcher, the decision logic, and Polymarket. Position sizing, the risk gate, and the
+`orders_fired` write. `ExecutorConfig::dispatch` is where a real order would go and `main.cpp`
+leaves it unset. The REST client is a fake, exactly as in `benchmarks/latency_bench.py`: no network,
+no credentials, no exchange call. A half-built version of any of those would be worse than its
+absence.
+
+`epoll` and `kqueue` tuning beyond what a single-connection Unix socket server needs, kernel bypass,
+and custom allocators. The executor handles one connection from one local peer, and the benchmark
+exists to find out where the time goes rather than to assume it.
+
+Throughput, process startup, memory, and binary size. This is a latency project.
+
+`simdjson`, which is the obvious choice for the decoder and is not used here. The encoder has to be
+byte identical to `orjson` and no general-purpose serializer is, so the encoder was going to be
+hand-written either way, and the decoder was written alongside it to match. Parsing here is not
+obviously faster than `simdjson` would be and has never been measured against it. `src/json.hpp`
+carries that trade-off, including the half of it that did not survive.
+
+The C++ poller client in `bench/` is a benchmark fixture, not a product. It exists so a cpp-to-cpp
+round trip can be measured next to py-to-py and py-to-cpp.
+
+Cross-platform comparison. CI builds on Linux and macOS so the code is portable. The numbers come
+off one machine and are never compared across two.
+
+## Running it
+
+SQLite and OpenSSL 3 are the external dependencies and both come from the system: macOS ships SQLite
+and Homebrew's `openssl@3` supplies the rest, Ubuntu needs `libsqlite3-dev` and `libssl-dev`. Catch2
+comes from FetchContent.
+
+```bash
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev --no-tests=error
+```
+
+```bash
+./build/dev/bin/executor_hotpath --socket /tmp/executor.sock --kill-switch /tmp/halt \
+    --telemetry-db /tmp/telemetry.db
+```
+
+Under sanitizers. `asan-ubsan` is what CI runs on Linux, `ubsan` is what runs on this Mac:
+
+```bash
+cmake --preset ubsan
+cmake --build --preset ubsan
+ctest --preset ubsan --no-tests=error
+```
+
+AddressSanitizer does not run on macOS here. On Darwin 25.5 with Apple clang 17 an
+ASan-instrumented `int main(){return 0;}` hangs before reaching `main`, with no local workaround.
+UndefinedBehaviorSanitizer works, which is why it gets its own preset. ASan and LeakSanitizer are
+exercised by the Linux job in CI, and only those results are believed.
+
+### Benchmarks
 
 Two harnesses, one estimator. `bench/` times four things inside this process, and
 `benchmarks/latency_bench.py` in `prediction-market-infra` gained `--executor cpp:PATH`, which puts
@@ -139,35 +229,8 @@ a nearest-rank implementation would agree to the printed precision and be wrong.
 
 `roundtrip` from the cpp-to-cpp configuration is write-to-ack and is not the Python's `wake_send`,
 which never waits for an ack. The number the two languages can be compared on is `wake_recv`.
-[`PORT-FIDELITY.md`](PORT-FIDELITY.md) has that and the rest of what the harnesses do differently.
 
-## Build
-
-SQLite and OpenSSL 3 are the external dependencies and both come from the system: macOS ships
-SQLite and Homebrew's `openssl@3` supplies the rest, Ubuntu needs `libsqlite3-dev` and
-`libssl-dev`. Catch2 comes from FetchContent.
-
-```bash
-cmake --preset dev
-cmake --build --preset dev
-ctest --preset dev --no-tests=error
-```
-
-Under sanitizers. `asan-ubsan` is what CI runs on Linux, `ubsan` is what runs on this Mac:
-
-```bash
-cmake --preset ubsan
-cmake --build --preset ubsan
-ctest --preset ubsan --no-tests=error
-```
-
-AddressSanitizer does not run on macOS here. On Darwin 25.5 with Apple clang 17 an
-ASan-instrumented `int main(){return 0;}` hangs before reaching `main`. That is a platform problem
-with no local workaround. UndefinedBehaviorSanitizer
-works, which is why it gets its own preset. ASan and LeakSanitizer are exercised by the Linux job
-in CI, and only those results are believed.
-
-## Linters
+### Linters
 
 Version-pinned, because Ubuntu ships clang-format 18 and Homebrew ships 23 and the two format the
 same file differently:
@@ -187,21 +250,6 @@ clang-tidy -p build/dev --warnings-as-errors='*' \
 The `-isysroot` argument is a macOS detail. The pip-installed clang-tidy is not Apple's, so it does
 not know where the SDK headers live, and without it every `#include <cstddef>` fails to parse and
 the resulting cascade invents findings that are not real. CI runs on Linux and needs no equivalent.
-
-## Regenerating the fixtures
-
-Nothing in CI regenerates them. They are committed, and changing one is a deliberate act with a
-diff to review:
-
-```bash
-uv run --with orjson python tests/golden/generate_golden.py --infra ../prediction-market-infra
-uv run --with cryptography python tests/golden/generate_signing_fixture.py \
-    --infra ../prediction-market-infra
-```
-
-Regenerating the frames against `prediction-market-infra` at `e3fd937` under Python 3.14.7
-reproduced all ten frames, all 1,000 doubles and all 424 snap cases byte for byte. The percentile
-vectors came out of the same run.
 
 ## License
 
