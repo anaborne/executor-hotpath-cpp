@@ -5,6 +5,14 @@ The executor process from
 against the same wire protocol, so the Python poller can drive either one and the two can be timed
 against each other in the same run on the same machine.
 
+The Python side is a published reference implementation, not a running system.
+`prediction-market-infra` is an extraction from a private trading bot, and that bot was shut down
+on 2026-08-29 when the last surviving strategy failed its pre-registered replication. The
+infrastructure was published; the trading was not continued. The comparison does not rest on it
+still trading. It is two implementations of one wire protocol, timed on one machine in one run,
+with `poller_client.py` driving both unchanged. What is not on offer is a production A/B, and no
+number here will be presented as one.
+
 ## Status: protocol, server, telemetry, signer. No benchmark yet.
 
 `WakeMessage`, `WakeAck`, the length-prefixed frame codec, a JSON layer written against orjson's

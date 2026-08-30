@@ -122,3 +122,21 @@ out where the bottleneck is rather than assume it.
 
 Cross-platform comparison. CI builds on Linux and macOS so the code is portable. The numbers come
 off one machine and are never compared across two.
+
+## 9. Corrections
+
+**2026-08-30.** Section 1 says `prediction-market-infra` runs a poller and an executor. It no
+longer runs anything. The private system it was extracted from was shut down on 2026-08-29, the
+extraction is what remains, and it is a published reference implementation rather than a live
+process.
+
+Nothing in the plan moves. The three configurations, the spans in section 3, the warm-up decision
+left open in section 4 and the pre-registered expectation in section 6 all describe a benchmark
+that runs both implementations on this machine, and none of them ever needed either process to be
+serving real orders.
+
+One claim does move. Section 2 calls py-to-cpp "the drop-in substitution a real deployment would
+make." There is no deployment left to make it in. It is the substitution the protocol permits,
+demonstrated by `poller_client.py` driving both executors without a change, and that is how the
+number will be labelled in RESULTS.md.
+

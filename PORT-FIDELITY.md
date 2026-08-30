@@ -8,6 +8,11 @@ listed here or is a defect.
 Every behaviour attributed to Python below was observed by running it, under orjson 3.12.0, the
 version that repository's `uv.lock` pins. None of it is inferred from documentation.
 
+That repository is frozen. The private system it was extracted from was shut down on 2026-08-29,
+so the protocol this port tracks is a fixed target rather than one moving under it.
+`tests/golden/SOURCE.txt` and `tests/golden/signing/SOURCE.txt` record the commit each fixture was
+generated from.
+
 ## What is byte identical
 
 The frame is a 4-byte big-endian length prefix followed by the body. The body's key order is the
