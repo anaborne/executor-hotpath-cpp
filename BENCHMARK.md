@@ -1,0 +1,124 @@
+# Benchmark plan, written before the executor exists
+
+Written 2026-08-29, before the first line of the C++ executor. Nothing in this repository has been
+measured yet. The point of writing it now is that the expectation below is falsifiable and the
+methodology is fixed, so a number that comes back wrong cannot be reinterpreted into a number that
+comes back right.
+
+Corrections are appended with a date, never edited into place.
+
+## 1. What is being compared
+
+One process, not one system. `prediction-market-infra` runs a poller and an executor over a Unix
+domain socket. This repository reimplements the executor, from `accept` to the point where the
+Python version calls `dispatch()`: read the frame, stamp, decode, ack, kill switch, wire-price
+refusal, template fill, telemetry enqueue. The REST client is a fake, exactly as in
+`benchmarks/latency_bench.py`. No network, no credentials, no exchange.
+
+The wire protocol is unchanged, byte for byte. 4-byte big-endian length prefix, JSON body,
+`WakeMessage` schema v4 with every post-v1 default preserved, `WakeAck` with status in
+{accepted, rejected}. The Python poller must drive the C++ executor with zero changes to
+`poller_client.py`. If that stops being true the comparison is not honest and the numbers are
+withdrawn.
+
+## 2. The three configurations
+
+| Configuration | Poller | Executor |
+|---|---|---|
+| py-to-py | Python, uvloop | Python, uvloop |
+| py-to-cpp | Python, uvloop | C++ |
+| cpp-to-cpp | C++ | C++ |
+
+py-to-py is the baseline and already exists. py-to-cpp is the one that matters, because it is the
+drop-in substitution a real deployment would make. cpp-to-cpp exists so the Python poller's floor
+can be separated from the executor's cost, and for no other reason. The C++ poller client is a
+measurement instrument, not a product, and it is the first thing cut if the schedule slips.
+
+## 3. What is measured
+
+Executor-side `wake_recv`, which is decode plus ack, the same span the Python executor already
+records. End-to-end `wake_send` as the Python harness measures it, from the poller's `put_nowait`
+to the poller reading the ack back. The signer, RSA-PSS over `timestamp + method + path`, in both
+languages. A cpp-to-cpp round trip.
+
+Reported as p50, p90, p99 over n=2000, from a sorted vector. No histogram and no HdrHistogram
+dependency; at n=2000 a sorted vector is exact and the dependency buys nothing.
+
+The percentile estimator must be the one `latency_bench.py::_percentile` already uses, which is
+linear interpolation on `rank = (n - 1) * p` between the floor and ceiling ranks. This is the type-7
+estimator. It is written down here because a nearest-rank C++ implementation would produce numbers
+that look comparable to the Python ones and are not, and that error would be invisible in every
+output the harness prints.
+
+## 4. Warm-up, and an open decision
+
+Warm-up iterations are discarded and the count is stated in the output.
+
+`latency_bench.py` currently discards none. Every iteration lands in the percentile set including
+the first, with a cold RSA context, a cold socket, and a cold SQLite page cache. That is a real gap
+in the existing harness, and it has to be closed on both sides or neither: a C++ run with warm-up
+against a Python run without it is a rigged comparison, and the rigging favours the result this
+repository wants.
+
+Not resolved here. Recorded as an open decision to be made at step 6, when the harness flag is
+added, and whichever way it goes it goes the same way in both languages.
+
+## 5. The machine
+
+One session, on the Mac, fresh boot, nothing else open. Apple silicon, Apple clang, Python 3.12.
+Every row carries a platform tag, as `history.csv` already does, because latency is a property of
+the machine and not of the code. Numbers produced on a GitHub runner are not reported anywhere.
+
+Raw CSVs are committed. `history.csv` in `prediction-market-infra` gains an `executor` column and
+existing rows are backfilled with `python`.
+
+## 6. The expectation, pre-registered
+
+Executor-side `wake_recv` drops by roughly an order of magnitude, and end-to-end `wake_send` barely
+moves.
+
+The reasoning is the span boundaries, not optimism about C++. `wake_send` starts at the poller's
+`put_nowait` and ends when the poller reads the ack back, so it contains a Python queue hop, a
+Python `drain()`, and a Python telemetry enqueue on either side of whatever the executor does. The
+C++ executor replaces only the middle. The Python poller is the floor, and a floor is not something
+the executor can optimise.
+
+The current Python baseline, from `benchmarks/history.csv` on Linux-aarch64-py3.14.7:
+
+```
+wake_recv (uvloop)   p50=0.0039ms  p99=0.0053ms
+wake_send (uvloop)   p50=0.5905ms  p99=0.6958ms
+sign()               p50=0.3303ms  p99=0.4962ms
+```
+
+`wake_recv` at 3.9us p50 is already fast. How much faster, and whether the difference survives
+contact with the end-to-end number, is what the run has to answer. If py-to-cpp `wake_send` comes
+back materially better than py-to-py, the expectation above was wrong and the README says so in its
+first paragraph.
+
+The signer is a separate question. Both languages call into an RSA implementation and spend their
+time in a modular exponentiation neither of them wrote, so a large gap there would be surprising and
+would mean the Python binding overhead is bigger than assumed rather than that the C++ is fast.
+
+## 7. Done means
+
+`history.csv` has rows for all three configurations from one machine on one day. The golden-frame
+contract test passes in both languages. RESULTS.md is written the same day as the run. If the
+numbers contradict section 6, that is the finding and it leads.
+
+## 8. Not measured, recorded so the absence is a decision
+
+Throughput. This is a latency project.
+
+Process startup, memory, and binary size.
+
+The poller, the matcher, the decision logic, and Polymarket. All out of scope by design, and a
+half-built version of any of them would be worse than their absence.
+
+epoll and kqueue tuning beyond what a single-connection Unix socket server needs, kernel bypass,
+and custom allocators. The executor handles one connection from one local peer. Reaching for any of
+those would be optimising a path that is not the bottleneck, and the benchmark is supposed to find
+out where the bottleneck is rather than assume it.
+
+Cross-platform comparison. CI builds on Linux and macOS so the code is portable. The numbers come
+off one machine and are never compared across two.
