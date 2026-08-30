@@ -1,14 +1,17 @@
 #include <csignal>
 #include <cstdio>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "hotpath/executor.hpp"
 #include "hotpath/killswitch.hpp"
+#include "hotpath/telemetry.hpp"
 #include "hotpath/version.hpp"
 
 namespace {
@@ -22,13 +25,15 @@ extern "C" void request_stop(int /*signal*/) {
 }
 
 void usage() {
-    static_cast<void>(
-        std::fputs("usage: executor_hotpath --socket PATH [--kill-switch PATH]\n", stderr));
+    static_cast<void>(std::fputs(
+        "usage: executor_hotpath --socket PATH [--kill-switch PATH] [--telemetry-db PATH]\n",
+        stderr));
 }
 
 int run(std::span<char*> args) {
     std::string socket_path;
     std::string kill_switch_path;
+    std::string telemetry_db_path;
 
     for (std::size_t i = 1; i < args.size(); ++i) {
         const std::string_view flag(args[i]);
@@ -37,6 +42,8 @@ int run(std::span<char*> args) {
             socket_path = args[++i];
         } else if (flag == "--kill-switch" && has_value) {
             kill_switch_path = args[++i];
+        } else if (flag == "--telemetry-db" && has_value) {
+            telemetry_db_path = args[++i];
         } else if (flag == "--version") {
             const std::string_view name = hotpath::version();
             static_cast<void>(
@@ -58,9 +65,34 @@ int run(std::span<char*> args) {
         kill_switch = std::make_unique<hotpath::KillSwitch>(kill_switch_path);
     }
 
+    std::unique_ptr<hotpath::TelemetrySink> telemetry;
+    if (!telemetry_db_path.empty()) {
+        telemetry = std::make_unique<hotpath::TelemetrySink>(telemetry_db_path);
+        if (const std::optional<std::string> failure = telemetry->open(); failure.has_value()) {
+            static_cast<void>(
+                std::fprintf(stderr, "telemetry open failed: %s\n", failure->c_str()));
+            return 1;
+        }
+    }
+
+    std::function<void(const hotpath::WakeRecvEvent&)> record_wake_recv;
+    if (telemetry) {
+        record_wake_recv = [sink = telemetry.get()](const hotpath::WakeRecvEvent& event) {
+            static_cast<void>(sink->record(hotpath::LatencyEvent{
+                .correlation_id = event.correlation_id,
+                .stage = hotpath::LatencyStage::WakeRecv,
+                .started_at_ms = event.started_at_ms,
+                .ended_at_ms = event.ended_at_ms,
+                .duration_ms = event.duration_ms,
+                .dry_run = event.dry_run,
+            }));
+        };
+    }
+
     hotpath::ExecutorServer server(hotpath::ExecutorConfig{
         .socket_path = socket_path,
         .kill_switch = kill_switch.get(),
+        .record_wake_recv = std::move(record_wake_recv),
     });
 
     if (const std::optional<std::string> failure = server.listen(); failure.has_value()) {
@@ -94,6 +126,19 @@ int run(std::span<char*> args) {
                      static_cast<unsigned long long>(stats.fires_dispatched),
                      static_cast<unsigned long long>(stats.fires_refused_price),
                      static_cast<unsigned long long>(stats.fires_refused_kill_switch)));
+
+    if (telemetry) {
+        telemetry->close();
+        const hotpath::TelemetryStats counters = telemetry->stats();
+        static_cast<void>(std::fprintf(
+            stderr,
+            "telemetry rows_written=%llu dropped_ring_full=%llu dropped_oversized_id=%llu "
+            "dropped_write_failed=%llu\n",
+            static_cast<unsigned long long>(counters.rows_written),
+            static_cast<unsigned long long>(counters.rows_dropped_ring_full),
+            static_cast<unsigned long long>(counters.rows_dropped_oversized_id),
+            static_cast<unsigned long long>(counters.rows_dropped_write_failed)));
+    }
     return 0;
 }
 

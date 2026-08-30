@@ -15,6 +15,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -22,7 +23,9 @@
 #include "hotpath/executor.hpp"
 #include "hotpath/killswitch.hpp"
 #include "hotpath/protocol.hpp"
+#include "hotpath/telemetry.hpp"
 
+#include <sqlite3.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -137,7 +140,8 @@ std::vector<std::byte> read_frame(int fd) {
 // One server on one thread, serving a single connection, torn down with the fixture.
 class Harness {
 public:
-    explicit Harness(const std::string& tag, KillSwitch* kill_switch = nullptr)
+    explicit Harness(const std::string& tag, KillSwitch* kill_switch = nullptr,
+                     hotpath::TelemetrySink* sink = nullptr)
         : socket_path_(unique_socket_path(tag)),
           server_(ExecutorConfig{
               .socket_path = socket_path_,
@@ -154,7 +158,18 @@ public:
                                        .order_address = fire.order});
                   },
               .record_wake_recv =
-                  [this](const hotpath::WakeRecvEvent& event) { wake_recv_.push_back(event); },
+                  [this, sink](const hotpath::WakeRecvEvent& event) {
+                      wake_recv_.push_back(event);
+                      if (sink != nullptr) {
+                          static_cast<void>(sink->record(
+                              hotpath::LatencyEvent{.correlation_id = event.correlation_id,
+                                                    .stage = hotpath::LatencyStage::WakeRecv,
+                                                    .started_at_ms = event.started_at_ms,
+                                                    .ended_at_ms = event.ended_at_ms,
+                                                    .duration_ms = event.duration_ms,
+                                                    .dry_run = event.dry_run}));
+                      }
+                  },
           }) {
         const std::optional<std::string> failure = server_.listen();
         INFO(failure.value_or(""));
@@ -404,4 +419,48 @@ TEST_CASE("a second wake on one ticker reuses its template", "[executor]") {
 
     CHECK(first != nullptr);
     CHECK(first == second);
+}
+
+// The whole path, from a frame on the socket to a row `latency_bench.py`'s query returns. Every
+// other telemetry test starts at `record()`; this one starts where the poller does.
+TEST_CASE("a wake reaches latency_events through the sink the executable wires", "[executor]") {
+    const std::filesystem::path db_path =
+        std::filesystem::temp_directory_path() /
+        ("hotpath-executor-telemetry-" + std::to_string(::getpid()) + ".db");
+    std::error_code ec;
+    std::filesystem::remove(db_path, ec);
+
+    hotpath::TelemetrySink sink(db_path);
+    REQUIRE_FALSE(sink.open().has_value());
+
+    {
+        Harness harness("telemetry", nullptr, &sink);
+        const int client = connect_to(harness.socket_path());
+        send_all(client, hotpath::encode_frame(wake("c-telemetry")));
+        REQUIRE_FALSE(read_frame(client).empty());
+        ::close(client);
+        harness.join_after_disconnect();
+    }
+    sink.close();
+
+    sqlite3* handle = nullptr;
+    REQUIRE(sqlite3_open(db_path.c_str(), &handle) == SQLITE_OK);
+    sqlite3_stmt* statement = nullptr;
+    REQUIRE(
+        sqlite3_prepare_v2(handle,
+                           "SELECT correlation_id, duration_ms, metadata_json FROM latency_events "
+                           "WHERE stage = 'wake_recv'",
+                           -1, &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    CHECK(std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement, 0))) ==
+          "c-telemetry");
+    CHECK(sqlite3_column_double(statement, 1) > 0.0);
+    CHECK(std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement, 2))) ==
+          R"({"dry_run": false})");
+    CHECK(sqlite3_step(statement) == SQLITE_DONE);
+    sqlite3_finalize(statement);
+    sqlite3_close(handle);
+
+    CHECK(sink.stats().rows_written == 1);
+    std::filesystem::remove(db_path, ec);
 }
