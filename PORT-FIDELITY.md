@@ -167,3 +167,58 @@ rather than blocking on a queue, because a condition variable would put the wake
 producer, which is the thread being measured. And a `record` call before `open()` is accepted into
 the ring and written once the writer starts, where `_enqueue` raises `RuntimeError`; a sink that is
 never opened reports those rows as queue depth at exit rather than losing them silently.
+
+## The signer
+
+`RequestSigner` ports `auth/signer.py`. RSA-PSS over `timestamp + method + path` concatenated with
+no separator, SHA-256 as the digest and inside MGF1, salt length equal to the digest length, base64
+with no line breaks. `sign_websocket_auth` signs the fixed `GET` and `/trade-api/ws/v2` pair and
+keeps its own entry point, for the reason that file gives: no caller reaches for `sign` and
+authenticates a socket with a REST path.
+
+PSS salts randomly, so one message signed twice with one key yields two valid signatures and
+neither is the expected value of the other. What replaces a byte comparison runs in both
+directions. `tests/golden/signing` holds a public key and five signatures the real `signer.py`
+produced against a throwaway RSA-2048 key, and `tests/test_signer.cpp` verifies every one of them
+against the message this port builds, through a verifier written straight against OpenSSL rather
+than through anything in `src/signer.cpp`. That pins the message construction, the digest, the MGF
+and the salt length: a signature carrying OpenSSL's own default salt, 222 bytes, the widest an
+RSA-2048 modulus allows, fails that verifier, and a test asserts it rather than assuming it.
+
+The other direction runs on demand:
+
+```bash
+uv run python tests/golden/generate_signing_fixture.py --verify-cpp build/dev/signer_cross_check
+```
+
+It reads what the test wrote on its last run and puts each signature through `cryptography`'s own
+PSS verifier. `signing/SOURCE.txt` carries the date that last passed. It is not a CI gate, and the
+reason belongs here rather than nowhere: gating it would install `cryptography` on all three
+runners to check a value that differs every run, while the committed direction already fails on any
+disagreement about the four parameters. One caveat that the gate does not close. `cryptography` is
+OpenSSL underneath, so both verifiers share an implementation, and what the fixture proves is
+agreement about the parameters and the message rather than agreement between two independent
+implementations of PSS.
+
+Two differences.
+
+1. No private key enters this repository. `tests/auth/test_signer.py` generates one per test into
+   `tmp_path` and the fixture generator does the same, writing out only the public half, so a
+   checkout carries no PEM for a secret scanner to rule on. Committed: one public key and five
+   signatures.
+2. A key that will not load comes back from `load()` as a message, where `__init__` raises
+   `TypeError` for a non-RSA key and lets `cryptography` raise for the rest. A signature that will
+   not compute from a key that already loaded throws, as `_sign_message` raises. The split is that
+   the first is an operator handing the process the wrong file and the second is an allocation or
+   the RNG failing, which has no caller-side recovery to write.
+
+One mechanical note. `load_pem_private_key(..., password=None)` raises on an encrypted PEM;
+OpenSSL's default callback reads a passphrase from the terminal instead, so the callback here
+refuses, and an executor started by launchd with an encrypted key fails rather than hanging on a
+prompt no one is watching.
+
+The signer is not wired into the executor's fire path, on either side. Signing happens inside
+`transport/rest_client.py`, past the `dispatch()` boundary step 3 stopped at, and
+`benchmarks/latency_bench.py` times `sign()` standalone over 2000 iterations against a throwaway
+key. Step 6 mirrors that in `bench/`.
+

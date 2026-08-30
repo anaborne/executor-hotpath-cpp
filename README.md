@@ -5,13 +5,14 @@ The executor process from
 against the same wire protocol, so the Python poller can drive either one and the two can be timed
 against each other in the same run on the same machine.
 
-## Status: protocol, server, telemetry. No signer.
+## Status: protocol, server, telemetry, signer. No benchmark yet.
 
 `WakeMessage`, `WakeAck`, the length-prefixed frame codec, a JSON layer written against orjson's
 output rather than against the JSON grammar alone, the executor server from `accept` to the point
-where the Python calls `dispatch()`, and the telemetry path that carries `wake_recv` off that
-server and into SQLite. The signer is not written. [`BENCHMARK.md`](BENCHMARK.md) records what will
-be measured and what is expected, written before any of it exists.
+where the Python calls `dispatch()`, the telemetry path that carries `wake_recv` off that server
+and into SQLite, and the Kalshi request signer. Nothing is measured yet.
+[`BENCHMARK.md`](BENCHMARK.md) records what will be measured and what is expected, written before
+any of it existed.
 
 The encoder is byte identical to `orjson.dumps` over these two dataclasses, and ten frames produced
 by running the Python itself hold it there. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records what is
@@ -57,10 +58,39 @@ write and leaves all five rows in place.
     --telemetry-db /tmp/telemetry.db
 ```
 
+## Signer
+
+RSA-PSS over `timestamp + method + path`, MGF1 and the digest both SHA-256, salt length equal to
+the digest length, base64 out, through OpenSSL 3's EVP interface. Kalshi's published construction,
+and `auth/signer.py` is the specification for it.
+
+PSS salts randomly, so signing one message twice with one key gives two different valid signatures
+and there is no golden signature to compare bytes against. The check runs both ways instead.
+`tests/golden/signing` holds five signatures the Python produced against a throwaway RSA-2048 key
+and the public key that verifies them, and the test suite verifies each one against the message
+this port builds. A signature carrying OpenSSL's default salt, 222 bytes rather than 32, fails that
+same verifier, which is what keeps the assertion from being vacuous.
+
+The other direction is a command rather than a gate, because gating it would put `cryptography` on
+all three CI runners to check a value that is different every run:
+
+```bash
+uv run python tests/golden/generate_signing_fixture.py --verify-cpp build/dev/signer_cross_check
+```
+
+```
+5 C++ signatures verified against the Python's own PSS parameters
+```
+
+No private key is committed. Both sides generate one into a temporary directory and only the public
+half is written out. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records the two differences and the one
+caveat the fixture does not close.
+
 ## Build
 
-SQLite is the one external dependency and comes from the system: macOS ships it, and Ubuntu needs
-`libsqlite3-dev`. Catch2 comes from FetchContent.
+SQLite and OpenSSL 3 are the external dependencies and both come from the system: macOS ships
+SQLite and Homebrew's `openssl@3` supplies the rest, Ubuntu needs `libsqlite3-dev` and
+`libssl-dev`. Catch2 comes from FetchContent.
 
 ```bash
 cmake --preset dev
@@ -102,14 +132,19 @@ The `-isysroot` argument is a macOS detail. The pip-installed clang-tidy is not 
 not know where the SDK headers live, and without it every `#include <cstddef>` fails to parse and
 the resulting cascade invents findings that are not real. CI runs on Linux and needs no equivalent.
 
-## Regenerating the golden frames
+## Regenerating the fixtures
 
 Nothing in CI regenerates them. They are committed, and changing one is a deliberate act with a
 diff to review:
 
 ```bash
 uv run --with orjson python tests/golden/generate_golden.py --infra ../prediction-market-infra
+uv run --with cryptography python tests/golden/generate_signing_fixture.py \
+    --infra ../prediction-market-infra
 ```
+
+Regenerating the frames against `prediction-market-infra` at `e3fd937` under Python 3.14.7
+reproduced all ten frames, all 1,000 doubles and all 424 snap cases byte for byte.
 
 ## License
 
