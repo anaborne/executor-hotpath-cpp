@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_latency_events_started_at ON latency_events (star
 )sql";
 
 // `telemetry/migrations.py::SCHEMA_VERSION`, the length of that module's migration list at
-// prediction-market-infra 50230a5. Stamped only on a database this process created, which is the
+// prediction-market-infra e3fd937. Stamped only on a database this process created, which is the
 // branch `initialize()` takes on a database `schema.sql` has just built. Every migration past the
 // first alters a table the executor never writes, and `schema.sql` declares all of them in their
 // post-migration shape, so a Python open that finds this file and skips the migrations lands where
