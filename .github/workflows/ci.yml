@@ -1,0 +1,146 @@
+# The gates, in the same order and with the same flags as the local commands in the README, so a
+# green check here means what a clean local run means. Nothing in this file asserts a latency
+# number. A hosted runner is a shared machine and any threshold enforced on one would be either so
+# loose it asserts nothing or so tight it fails on a busy neighbour. The numbers come off the Mac,
+# and BENCHMARK.md says how.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CLANG_FORMAT_VERSION: 23.1.0
+  CLANG_TIDY_VERSION: 22.1.8
+
+jobs:
+  build:
+    name: build · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      # Without this a Linux failure cancels the in-flight macOS job, so you fix Linux, push, and
+      # only then find out macOS was broken too.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Install ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Report toolchain
+        run: |
+          cmake --version
+          "${CXX:-c++}" --version
+
+      - name: Cache Catch2 clone
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.deps
+          key: deps-${{ matrix.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: deps-${{ matrix.os }}-
+
+      - name: Configure
+        run: cmake --preset dev -DFETCHCONTENT_BASE_DIR="${{ github.workspace }}/.deps"
+
+      - name: Build
+        run: cmake --build --preset dev
+
+      # ctest exits 0 when discovery finds nothing, so without --no-tests=error a broken test
+      # registration reports success and the gate passes on no tests.
+      - name: Test
+        run: ctest --preset dev --no-tests=error
+
+  sanitize:
+    name: asan+ubsan · ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: halt_on_error=1:detect_leaks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build clang llvm
+
+      - name: Locate llvm-symbolizer
+        run: echo "ASAN_SYMBOLIZER_PATH=$(command -v llvm-symbolizer)" >> "$GITHUB_ENV"
+
+      - name: Cache Catch2 clone
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.deps
+          key: deps-asan-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: deps-asan-
+
+      - name: Configure
+        run: cmake --preset asan-ubsan -DFETCHCONTENT_BASE_DIR="${{ github.workspace }}/.deps"
+
+      - name: Build
+        run: cmake --build --preset asan-ubsan
+
+      - name: Test
+        run: ctest --preset asan-ubsan --no-tests=error
+
+  lint:
+    name: clang-format · clang-tidy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Pinned wheels rather than the distribution packages. Ubuntu ships clang-format 18 and this
+      # machine has 23; they disagree on output for an identical config, so an unpinned lint job
+      # fails on files the author just formatted.
+      - name: Install pinned linters
+        run: pip install "clang-format==${CLANG_FORMAT_VERSION}" "clang-tidy==${CLANG_TIDY_VERSION}"
+
+      - name: Format
+        run: |
+          find src include tests bench -type f \( -name '*.cpp' -o -name '*.hpp' \) -print0 \
+            | xargs -0 --no-run-if-empty clang-format --dry-run --Werror
+
+      - name: Cache Catch2 clone
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.deps
+          key: deps-lint-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: deps-lint-
+
+      - name: Configure for the compilation database
+        run: cmake --preset dev -DFETCHCONTENT_BASE_DIR="${{ github.workspace }}/.deps"
+
+      - name: Tidy
+        run: |
+          find src include tests -type f -name '*.cpp' -print0 \
+            | xargs -0 --no-run-if-empty clang-tidy -p build/dev --warnings-as-errors='*'
