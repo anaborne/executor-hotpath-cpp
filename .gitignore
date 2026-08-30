@@ -3,3 +3,6 @@ build/
 compile_commands.json
 .cache/
 .DS_Store
+
+# Working notes kept beside the repo and never published. The execution plan lives here.
+*.pdf
