@@ -9,6 +9,7 @@ add_executable(hotpath_tests
     test_pricing.cpp
     test_protocol.cpp
     test_protocol_golden.cpp
+    test_spsc_ring.cpp
 )
 
 # src/ is on the path because the JSON layer is internal to the library and tested directly. Its
