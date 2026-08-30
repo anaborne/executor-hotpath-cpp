@@ -19,6 +19,7 @@ a diff to review.
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import math
 import random
@@ -31,6 +32,17 @@ from types import ModuleType
 
 DOUBLE_SAMPLE_COUNT = 1000
 DOUBLE_SEED = 20260829
+SNAP_SAMPLE_COUNT = 400
+SNAP_SEED = 20260830
+
+# The standard one-cent grid every market carries, and the three-range ladder the 15-minute crypto
+# series quotes, tighter in the tails.
+CENT_GRID = [[0.0, 1.0, 0.01]]
+CRYPTO_LADDER = [[0.0, 0.05, 0.001], [0.05, 0.95, 0.01], [0.95, 1.0, 0.001]]
+
+
+def _bits(value: float) -> str:
+    return f"{struct.unpack('<Q', struct.pack('<d', float(value)))[0]:016x}"
 
 
 def load_protocol(infra_root: Path) -> ModuleType:
@@ -49,6 +61,67 @@ def load_protocol(infra_root: Path) -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_snap_to_grid(infra_root: Path):
+    """Pull `_snap_to_grid` out of `ipc/executor_server.py` without importing the module.
+
+    Importing it would drag in aiohttp, uvloop and the rest of the package to reach five lines of
+    arithmetic. Compiling the one function out of the file's own AST keeps the expectation coming
+    from that file rather than from a copy of it written here.
+    """
+    path = infra_root / "src" / "kalshi_bot" / "ipc" / "executor_server.py"
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_snap_to_grid":
+            namespace: dict[str, object] = {}
+            exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+            return namespace["_snap_to_grid"]
+    raise SystemExit(f"_snap_to_grid not found in {path}")
+
+
+def snap_cases() -> list[tuple[float, list[list[float]]]]:
+    """Prices and grids, curated for the cases that separate the two languages' rounding.
+
+    Python rounds half to even and `std::round` rounds half away from zero, so every price whose
+    quotient with the step lands exactly on a half is a place the two implementations can differ.
+    Those are first, then range boundaries, a price outside every range, an empty range list and a
+    zero step for the one-cent fallback, then a seeded sample over both grids.
+    """
+    ties = [
+        (0.25, [[0.0, 1.0, 0.5]]),
+        (0.75, [[0.0, 1.0, 0.5]]),
+        (1.25, [[0.0, 2.0, 0.5]]),
+        (1.75, [[0.0, 2.0, 0.5]]),
+        (0.01, [[0.0, 1.0, 0.02]]),
+        (0.03, [[0.0, 1.0, 0.02]]),
+        (0.375, [[0.0, 1.0, 0.25]]),
+        (0.625, [[0.0, 1.0, 0.25]]),
+        (0.005, []),
+        (0.015, []),
+        (0.025, []),
+    ]
+    edges = [
+        (0.0, CENT_GRID),
+        (1.0, CENT_GRID),
+        (0.05, CRYPTO_LADDER),
+        (0.95, CRYPTO_LADDER),
+        (0.0499, CRYPTO_LADDER),
+        (0.9501, CRYPTO_LADDER),
+        (1.5, CENT_GRID),
+        (-0.25, CENT_GRID),
+        (0.5, []),
+        (0.5, [[0.0, 1.0, 0.0]]),
+        (0.5, [[0.9, 1.0, 0.01]]),
+        (0.123456789, CENT_GRID),
+        (0.999999999, CENT_GRID),
+    ]
+    rng = random.Random(SNAP_SEED)
+    sampled = [
+        (rng.uniform(0.0, 1.0), CENT_GRID if index % 2 == 0 else CRYPTO_LADDER)
+        for index in range(SNAP_SAMPLE_COUNT)
+    ]
+    return ties + edges + sampled
 
 
 def wake_message_cases(protocol: ModuleType) -> dict[str, object]:
@@ -265,6 +338,19 @@ def main() -> int:
     ]
     (here / "doubles.tsv").write_text("\n".join(lines) + "\n")
 
+    snap_to_grid = load_snap_to_grid(args.infra)
+    snap_lines = [
+        "\t".join(
+            [
+                _bits(price),
+                ";".join(":".join(_bits(part) for part in triple) for triple in ranges),
+                _bits(snap_to_grid(price, ranges)),
+            ]
+        )
+        for price, ranges in snap_cases()
+    ]
+    (here / "snap_to_grid.tsv").write_text("\n".join(snap_lines) + "\n")
+
     revision = subprocess.run(
         ["git", "-C", str(args.infra), "rev-parse", "HEAD"],
         capture_output=True,
@@ -283,12 +369,13 @@ def main() -> int:
                 f"schema_version: {protocol.SCHEMA_VERSION}",
                 f"frames: {len(cases)}",
                 f"doubles: {len(lines)}",
+                f"snap_to_grid: {len(snap_lines)}",
             ]
         )
         + "\n"
     )
 
-    print(f"wrote {len(cases)} frames and {len(lines)} doubles")
+    print(f"wrote {len(cases)} frames, {len(lines)} doubles, {len(snap_lines)} snap cases")
     return 0
 
 

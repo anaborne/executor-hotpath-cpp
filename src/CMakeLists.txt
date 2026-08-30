@@ -2,6 +2,7 @@ add_library(hotpath_core STATIC
     clock.cpp
     json.cpp
     killswitch.cpp
+    pricing.cpp
     protocol.cpp
     version.cpp
 )

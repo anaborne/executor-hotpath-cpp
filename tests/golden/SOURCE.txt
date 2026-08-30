@@ -7,3 +7,4 @@ python: 3.12.14
 schema_version: 4
 frames: 10
 doubles: 1000
+snap_to_grid: 424
