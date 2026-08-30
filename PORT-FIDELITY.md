@@ -113,6 +113,57 @@ Four differences, all of them shape rather than behaviour on a frame:
    `build_template` validates its `outcome_side` against the same literal set the telemetry schema
    enforces; `Direction` is an enum here and cannot hold anything else.
 
-Position sizing, the risk gate, the `orders_fired` and `latency_events` writes, and the dispatch
-itself are not ported. Sizing and the risk gate are outside this repository's scope, the telemetry
-ring is step 4, and the benchmark harness that fills `record_wake_recv` is step 6.
+Position sizing, the risk gate, the `orders_fired` write, and the dispatch itself are not ported.
+Sizing and the risk gate are outside this repository's scope, and the benchmark harness that drives
+the whole thing is step 6.
+
+## The telemetry path
+
+`TelemetrySink` ports `telemetry/db.py`, restricted to `latency_events` and the `correlations`
+parent row its foreign key requires. A `record` call copies the row into a bounded ring and
+returns; a writer thread owns the SQLite connection, drains up to 500 rows, and commits once. That
+is the shape `db.py` already has, for the reason its own docstring gives: a telemetry write must
+never be able to delay the path it is observing.
+
+A row written by this process and a row written by the Python are the same row. Same six bound
+columns in the same order, `id` and `created_at_ms` left to the table's own defaults;
+`metadata_json` is the pre-serialized `{"dry_run": false}` / `{"dry_run": true}` pair from
+`executor_server.py::_DRY_RUN_METADATA` rather than a serializer call; and the
+`INSERT OR IGNORE INTO correlations` that `db.py::_insert` performs ahead of any child row runs
+here too, so the foreign key means the same thing on both sides. Five wakes driven through
+`ipc/protocol.py` into this binary come back out of
+`SELECT duration_ms FROM latency_events WHERE stage = 'wake_recv'`, which is `latency_bench.py`'s
+query with nothing changed.
+
+Four differences.
+
+1. The stage vocabulary is an enum. `record_latency_event()` validates a string against
+   `LATENCY_STAGES` and raises, because a mistyped stage there produced a silent hole in the exact
+   data the stage was added to collect. `LatencyStage` cannot hold a name that is not on the list,
+   so the check has nowhere to live and the failure mode it guards against does not exist.
+2. `correlations` and `latency_events` are the only tables this process creates, out of the nine in
+   `schema.sql`. It writes no others, and transcribing seven table definitions it never touches
+   would leave two copies of a schema to keep in step. `schema.sql` is
+   `CREATE TABLE IF NOT EXISTS` throughout, so a Python `initialize()` against the same file fills
+   in the rest afterwards.
+3. `PRAGMA user_version` is stamped at 6, `migrations.py::SCHEMA_VERSION`, and only on a database
+   this process created. That is the branch `initialize()` takes on a database `schema.sql` has
+   just built. Stamping zero instead sends the next Python open into `_add_order_fill_columns`,
+   which alters an `orders_fired` that does not exist yet; the open then raises
+   `OperationalError: no such table: orders_fired`, which was confirmed by running it. The constant
+   is a hand-copy of a number that lives in that module, so appending a migration there and not
+   here is a defect this file will not catch.
+4. A row is dropped for three reasons and each has its own counter, printed at exit. `db.py` drops
+   on a full queue and logs at most one warning per ten seconds, since a saturated queue drops
+   thousands of rows a second. This drops on a full ring, on a `correlation_id` longer than the
+   128-byte slot, and on an insert SQLite refuses. The long id is the one case with no Python
+   counterpart: `uuid4().hex` is 32 bytes and the benchmark's labels are shorter, so nothing
+   either process generates comes close, and the row is dropped rather than truncated because a
+   truncated id still satisfies the foreign key and still joins, to the wrong parent.
+
+Three smaller ones. Both inserts are prepared once at open rather than re-prepared per row, where
+`sqlite3` leans on its own statement cache. The writer polls the ring on a 500 microsecond interval
+rather than blocking on a queue, because a condition variable would put the wake-up cost on the
+producer, which is the thread being measured. And a `record` call before `open()` is accepted into
+the ring and written once the writer starts, where `_enqueue` raises `RuntimeError`; a sink that is
+never opened reports those rows as queue depth at exit rather than losing them silently.

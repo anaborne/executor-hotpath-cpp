@@ -5,13 +5,13 @@ The executor process from
 against the same wire protocol, so the Python poller can drive either one and the two can be timed
 against each other in the same run on the same machine.
 
-## Status: protocol and server. No telemetry, no signer.
+## Status: protocol, server, telemetry. No signer.
 
 `WakeMessage`, `WakeAck`, the length-prefixed frame codec, a JSON layer written against orjson's
-output rather than against the JSON grammar alone, and the executor server from `accept` to the
-point where the Python calls `dispatch()`. The telemetry ring and the signer are not written.
-[`BENCHMARK.md`](BENCHMARK.md) records what will be measured and what is expected, written before
-any of it exists.
+output rather than against the JSON grammar alone, the executor server from `accept` to the point
+where the Python calls `dispatch()`, and the telemetry path that carries `wake_recv` off that
+server and into SQLite. The signer is not written. [`BENCHMARK.md`](BENCHMARK.md) records what will
+be measured and what is expected, written before any of it exists.
 
 The encoder is byte identical to `orjson.dumps` over these two dataclasses, and ten frames produced
 by running the Python itself hold it there. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records what is
@@ -29,11 +29,38 @@ blocks until a frame arrives and a stamp taken ahead of it measures the gap betw
 goes out before the fire, so a dispatch never lands inside the span the poller measures. Price
 snapping matches Python's half-to-even `round()` against 424 cases the Python produced.
 
+## Telemetry
+
+`--telemetry-db` writes `latency_events` rows into the same SQLite file and the same columns
+`benchmarks/latency_bench.py` queries, so the Python harness reads the C++ executor's numbers with
+its own `SELECT` unchanged. A `record` call copies the row into a fixed-size ring and returns; one
+writer thread owns the connection and commits in batches of 500.
+
+Nothing on the read loop can wait for a write. The ring holds 8192 rows, pushing to a full one
+drops the row rather than blocking, and the four counters are printed at exit next to the server's:
+
+```
+frames=5 accepted=5 rejected=0 fired=5 refused_price=0 refused_kill_switch=0
+telemetry rows_written=5 dropped_ring_full=0 dropped_oversized_id=0 dropped_write_failed=0
+```
+
+A writer that fell behind shows up as `rows_written` short of `frames`. That is why the drops are
+counted rather than logged: a log line is something to go looking for, and a run that silently
+under-reported would look like a run that was quiet.
+
+Those five wakes came from the Python's own `protocol.py`. Opening the file the C++ wrote with the
+Python's own `TelemetryDB.initialize()` afterwards fills in the seven tables the executor does not
+write and leaves all five rows in place.
+
 ```bash
-./build/dev/bin/executor_hotpath --socket /tmp/executor.sock --kill-switch /tmp/halt
+./build/dev/bin/executor_hotpath --socket /tmp/executor.sock --kill-switch /tmp/halt \
+    --telemetry-db /tmp/telemetry.db
 ```
 
 ## Build
+
+SQLite is the one external dependency and comes from the system: macOS ships it, and Ubuntu needs
+`libsqlite3-dev`. Catch2 comes from FetchContent.
 
 ```bash
 cmake --preset dev
