@@ -61,7 +61,8 @@ against a Python run without it is a rigged comparison, and the rigging favours 
 repository wants.
 
 Not resolved here. Recorded as an open decision to be made at step 6, when the harness flag is
-added, and whichever way it goes it goes the same way in both languages.
+added, and whichever way it goes it goes the same way in both languages. Settled in section 9,
+under 2026-08-30, second.
 
 ## 5. The machine
 
@@ -140,3 +141,32 @@ make." There is no deployment left to make it in. It is the substitution the pro
 demonstrated by `poller_client.py` driving both executors without a change, and that is how the
 number will be labelled in RESULTS.md.
 
+**2026-08-30, second.** Section 4's open decision is settled. Both harnesses discard 200 warm-up
+iterations from the front of every sample and report over the 2000 that follow, and both print the
+discarded count on every line. `latency_bench.py` discarded none before today and its wake round
+trip ran 300 iterations rather than 2000, so both of those moved with it.
+
+The reasoning is that p99 at n=2000 is the twentieth worst sample. A handful of first-iteration
+outliers, a cold RSA blinding context, a cold socket buffer, a cold SQLite page cache, land inside
+that twenty rather than beside it, so leaving them in reports a startup cost as a steady-state
+percentile. 200 is ten percent of the sample: past every transient named above and far too small to
+absorb anything that persists.
+
+The three rows already in `history.csv` are backfilled with `warmup=0`, which is what those runs
+did, and their new `p90` cells are left empty rather than interpolated from a p50 and a p99 they
+were never computed with. They came off a different machine and section 5 already forbids comparing
+them to the Mac's numbers.
+
+**2026-08-30, third.** One asymmetry in the py-to-cpp configuration, recorded before the run rather
+than discovered in it. The Python executor dispatches every accepted fire through `OrderDispatcher`
+and the fake REST client and writes its own telemetry for the dispatch; the C++ binary's dispatch
+hook is empty, so past the ack it builds the order template and stops. `wake_recv` closes before the
+fire in both, so the span itself is unaffected, but the two processes are not equally loaded and
+`wake_send` in the py-to-cpp row runs against an executor with less to do. Any part of a py-to-cpp
+`wake_send` improvement could be that rather than the decoder, and RESULTS.md has to say so.
+
+**2026-08-30, fourth.** The cpp-to-cpp round trip does not measure `wake_send`. The Python's
+`wake_send` runs from the poller's `put_nowait` to the end of `drain()` and never waits for the ack;
+the C++ client in `bench/poller_client.cpp` writes one frame and blocks for its ack, which is a
+different span. It is reported as `roundtrip` and never in a `wake_send` column. The comparable
+number out of that configuration is `wake_recv`, which both executors record the same way.

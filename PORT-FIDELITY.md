@@ -119,8 +119,9 @@ Four differences, all of them shape rather than behaviour on a frame:
    enforces; `Direction` is an enum here and cannot hold anything else.
 
 Position sizing, the risk gate, the `orders_fired` write, and the dispatch itself are not ported.
-Sizing and the risk gate are outside this repository's scope, and the benchmark harness that drives
-the whole thing is step 6.
+Sizing and the risk gate are outside this repository's scope. `ExecutorConfig::dispatch` is where a
+real order would go and `main.cpp` leaves it unset, which is one of the differences recorded under
+"The benchmark harness" below.
 
 ## The telemetry path
 
@@ -225,5 +226,44 @@ prompt no one is watching.
 The signer is not wired into the executor's fire path, on either side. Signing happens inside
 `transport/rest_client.py`, past the `dispatch()` boundary step 3 stopped at, and
 `benchmarks/latency_bench.py` times `sign()` standalone over 2000 iterations against a throwaway
-key. Step 6 mirrors that in `bench/`.
+key. `bench/bench_main.cpp` mirrors that, same message, same path, same key size, same iteration
+count. `LatencyStage::Sign` is on the enum because `telemetry/db.py::LATENCY_STAGES` has it, and
+nothing in this repository writes a row with it.
 
+## The benchmark harness
+
+`bench/` and `benchmarks/latency_bench.py` are instruments rather than ports, and three of the
+things they do differ on purpose.
+
+**The percentile estimator is the one place they must not differ.** `bench/percentile.cpp`
+reproduces `_percentile` exactly, including writing the interpolation as that function writes it
+rather than through `std::lerp`, which rounds differently.
+`tests/golden/percentiles.tsv` holds seven vectors and the values the Python returns for each at
+p=0, 0.5, 0.9, 0.99 and 1, compared as bit patterns. On the n=2000 vector the type-7 value at
+p=0.5, p=0.9 and p=0.99 differs from both order statistics it falls between, so a nearest-rank
+implementation fails the test rather than passing it by coincidence.
+
+**No mean on the C++ side.** BENCHMARK.md section 3 reports p50, p90 and p99. `statistics.mean` is
+exact-then-rounded and a running sum is not, so a mean column would differ in its last digit for a
+reason that has nothing to do with what either implementation costs.
+
+**`roundtrip` is not `wake_send`.** `poller_client.py` is async, queues, and reads acks on a
+separate task; its `wake_send` span runs from the caller's `sent_at_ns` to the end of `drain()` and
+never waits for an ack. `bench/poller_client.cpp` writes one frame and blocks for its ack. The two
+are not the same measurement and the C++ number is never written into a `wake_send` column. The
+comparable span out of the cpp-to-cpp configuration is `wake_recv`, which both executors record the
+same way and around the same three operations.
+
+Two more differences worth stating before the run rather than after it.
+
+1. In py-to-cpp the C++ executor does less after the ack than the Python executor does. The Python
+   dispatches every accepted fire through `OrderDispatcher` and the fake REST client and writes
+   telemetry for it; `main.cpp` leaves `ExecutorConfig::dispatch` unset, so past the ack the C++
+   snaps the price, checks the kill switch, fills the template, and stops. `wake_recv` closes before
+   the fire on both sides, so the span is unaffected, but the processes are not equally loaded.
+2. `--executor cpp:PATH` hands the C++ binary the same `--telemetry-db` the Python poller opened,
+   and the two processes write `latency_events` rows into one file concurrently. The Python opens it
+   first so its migrations decide the schema; the C++ sink is `CREATE TABLE IF NOT EXISTS`
+   throughout and stamps `user_version` only on a file it created. Completion is the executor's own
+   `wake_recv` row count, not the count of frames the poller wrote, because terminating on
+   frames-written leaves wakes in the socket buffer that the executor was about to read.

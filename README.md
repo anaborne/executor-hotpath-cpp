@@ -13,14 +13,17 @@ still trading. It is two implementations of one wire protocol, timed on one mach
 with `poller_client.py` driving both unchanged. What is not on offer is a production A/B, and no
 number here will be presented as one.
 
-## Status: protocol, server, telemetry, signer. No benchmark yet.
+## Status: the harness runs on both sides. No numbers reported yet.
 
 `WakeMessage`, `WakeAck`, the length-prefixed frame codec, a JSON layer written against orjson's
 output rather than against the JSON grammar alone, the executor server from `accept` to the point
 where the Python calls `dispatch()`, the telemetry path that carries `wake_recv` off that server
-and into SQLite, and the Kalshi request signer. Nothing is measured yet.
-[`BENCHMARK.md`](BENCHMARK.md) records what will be measured and what is expected, written before
-any of it existed.
+and into SQLite, the Kalshi request signer, and the benchmark harness on both sides of the wire.
+
+No figure is reported anywhere in this repository yet. The run happens on one machine in one
+session and RESULTS.md is written the same day. [`BENCHMARK.md`](BENCHMARK.md) records what will be
+measured, how, and what is expected, written before any of it existed and corrected in place at the
+bottom rather than edited above.
 
 The encoder is byte identical to `orjson.dumps` over these two dataclasses, and ten frames produced
 by running the Python itself hold it there. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records what is
@@ -94,6 +97,32 @@ No private key is committed. Both sides generate one into a temporary directory 
 half is written out. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records the two differences and the one
 caveat the fixture does not close.
 
+## Benchmarks
+
+Two harnesses, one estimator. `bench/` times four things inside this process, and
+`benchmarks/latency_bench.py` in `prediction-market-infra` gained `--executor cpp:PATH`, which puts
+this binary on the far end of the poller's socket with `poller_client.py` unmodified:
+
+```bash
+cmake --preset release && cmake --build --preset release
+./build/release/bin/executor_hotpath_bench --csv bench_history.csv
+```
+
+```bash
+uv run python benchmarks/latency_bench.py \
+    --executor cpp:/path/to/executor-hotpath-cpp/build/release/bin/executor_hotpath
+```
+
+Both discard 200 warm-up iterations and report p50, p90 and p99 over the 2000 that follow, from a
+sorted vector rather than a histogram, which at that sample size is exact and buys no dependency.
+Both use the type-7 estimator `_percentile` uses; `tests/golden/percentiles.tsv` holds that
+function's own output for seven vectors and the C++ is compared against it as bit patterns, because
+a nearest-rank implementation would agree to the printed precision and be wrong.
+
+`roundtrip` from the cpp-to-cpp configuration is write-to-ack and is not the Python's `wake_send`,
+which never waits for an ack. The number the two languages can be compared on is `wake_recv`.
+[`PORT-FIDELITY.md`](PORT-FIDELITY.md) has that and the rest of what the harnesses do differently.
+
 ## Build
 
 SQLite and OpenSSL 3 are the external dependencies and both come from the system: macOS ships
@@ -133,7 +162,8 @@ uv tool install clang-tidy==22.1.8
 ```bash
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.hpp')
 clang-tidy -p build/dev --warnings-as-errors='*' \
-    --extra-arg="-isysroot$(xcrun --show-sdk-path)" $(git ls-files 'src/*.cpp' 'tests/*.cpp')
+    --extra-arg="-isysroot$(xcrun --show-sdk-path)" \
+    $(git ls-files 'src/*.cpp' 'tests/*.cpp' 'bench/*.cpp')
 ```
 
 The `-isysroot` argument is a macOS detail. The pip-installed clang-tidy is not Apple's, so it does
@@ -152,7 +182,8 @@ uv run --with cryptography python tests/golden/generate_signing_fixture.py \
 ```
 
 Regenerating the frames against `prediction-market-infra` at `e3fd937` under Python 3.14.7
-reproduced all ten frames, all 1,000 doubles and all 424 snap cases byte for byte.
+reproduced all ten frames, all 1,000 doubles and all 424 snap cases byte for byte. The percentile
+vectors came out of the same run.
 
 ## License
 
