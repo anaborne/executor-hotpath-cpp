@@ -39,12 +39,9 @@
     },
     {
       "name": "release",
-      "displayName": "Optimized, benchmarks on",
+      "displayName": "Optimized, the preset the numbers come from",
       "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "HOTPATH_BUILD_BENCH": "ON"
-      }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     }
   ],
   "buildPresets": [

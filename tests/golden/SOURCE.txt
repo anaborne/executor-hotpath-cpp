@@ -8,3 +8,4 @@ schema_version: 4
 frames: 10
 doubles: 1000
 snap_to_grid: 424
+percentile_vectors: 7

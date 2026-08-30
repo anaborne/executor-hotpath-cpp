@@ -1,4 +1,12 @@
-# No benchmark targets yet. The microbenchmarks land with the code they measure; this file exists
-# so HOTPATH_BUILD_BENCH resolves and the release preset configures.
-add_library(hotpath_bench_support INTERFACE)
-target_link_libraries(hotpath_bench_support INTERFACE hotpath::core hotpath::warnings)
+# The support library is built unconditionally, and the executable is what HOTPATH_BUILD_BENCH
+# gates. The percentile estimator is covered by the test suite, which the dev and sanitizer presets
+# build and the release preset does not run for numbers; leaving it behind the option would put the
+# one piece of arithmetic BENCHMARK.md calls invisibly wrong outside every gate that could catch
+# it.
+add_library(hotpath_bench_support STATIC
+    percentile.cpp
+)
+add_library(hotpath::bench_support ALIAS hotpath_bench_support)
+
+target_include_directories(hotpath_bench_support PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
+target_link_libraries(hotpath_bench_support PUBLIC hotpath::core PRIVATE hotpath::warnings)

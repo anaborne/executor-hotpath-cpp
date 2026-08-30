@@ -19,7 +19,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 option(HOTPATH_WERROR "Treat compiler warnings as errors" ON)
 option(HOTPATH_BUILD_TESTS "Build the test suite" ON)
-option(HOTPATH_BUILD_BENCH "Build the microbenchmarks" OFF)
+option(HOTPATH_BUILD_BENCH "Build the microbenchmark executable" ON)
 set(HOTPATH_SANITIZE "" CACHE STRING
     "Comma-separated -fsanitize list, for example address,undefined. Empty disables.")
 
@@ -73,10 +73,9 @@ set(CMAKE_COMPILE_WARNING_AS_ERROR ${HOTPATH_WERROR})
 
 add_subdirectory(src)
 
+# Before tests, which link the benchmark support library.
+add_subdirectory(bench)
+
 if(HOTPATH_BUILD_TESTS)
     add_subdirectory(tests)
-endif()
-
-if(HOTPATH_BUILD_BENCH)
-    add_subdirectory(bench)
 endif()

@@ -6,6 +6,7 @@ add_executable(hotpath_tests
     test_double_format.cpp
     test_executor.cpp
     test_killswitch.cpp
+    test_percentile.cpp
     test_pricing.cpp
     test_protocol.cpp
     test_protocol_golden.cpp
@@ -29,9 +30,11 @@ target_compile_definitions(hotpath_tests
             HOTPATH_SIGNER_CROSS_CHECK_DIR="${CMAKE_BINARY_DIR}/signer_cross_check"
 )
 
+# hotpath::core arrives through hotpath::bench_support, which links it publicly. Naming it here as
+# well puts the same archive on the link line twice and ld says so on every build.
 target_link_libraries(hotpath_tests
     PRIVATE
-        hotpath::core
+        hotpath::bench_support
         hotpath::warnings
         Catch2::Catch2WithMain
         SQLite::SQLite3

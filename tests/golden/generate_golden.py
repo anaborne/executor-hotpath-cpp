@@ -7,7 +7,7 @@ path, encodes a fixed set of messages, and writes each frame whole, length prefi
 
     uv run --with orjson python tests/golden/generate_golden.py --infra ../prediction-market-infra
 
-`doubles.tsv` is the other half. It pairs a double, written as its IEEE-754 bits so no decimal text
+`doubles.tsv` is the second half. It pairs a double, written as its IEEE-754 bits so no decimal text
 sits between the value and the test, with the string `orjson.dumps` produces for it. The C++ side
 reproduces that string from `std::to_chars` shortest digits and orjson's fixed-versus-scientific
 threshold, and this file is what holds the reproduction honest.
@@ -34,6 +34,9 @@ DOUBLE_SAMPLE_COUNT = 1000
 DOUBLE_SEED = 20260829
 SNAP_SAMPLE_COUNT = 400
 SNAP_SEED = 20260830
+PERCENTILE_SAMPLE_COUNT = 2000
+PERCENTILE_SEED = 20260831
+PERCENTILE_PROBABILITIES = [0.0, 0.50, 0.90, 0.99, 1.0]
 
 # The standard one-cent grid every market carries, and the three-range ladder the 15-minute crypto
 # series quotes, tighter in the tails.
@@ -78,6 +81,48 @@ def load_snap_to_grid(infra_root: Path):
             exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
             return namespace["_snap_to_grid"]
     raise SystemExit(f"_snap_to_grid not found in {path}")
+
+
+def load_percentile(infra_root: Path):
+    """Pull `_percentile` out of `benchmarks/latency_bench.py`, the same way as `_snap_to_grid`.
+
+    Importing the module would pull in uvloop, cryptography and the package itself to reach seven
+    lines of arithmetic, and the point is that the expectation comes from that file rather than
+    from a transcription of it here.
+    """
+    path = infra_root / "benchmarks" / "latency_bench.py"
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_percentile":
+            namespace: dict[str, object] = {"math": math}
+            exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+            return namespace["_percentile"]
+    raise SystemExit(f"_percentile not found in {path}")
+
+
+def percentile_cases() -> list[tuple[str, list[float]]]:
+    """Sample vectors, each evaluated at every probability in `PERCENTILE_PROBABILITIES`.
+
+    The small ones cover the branches: one value, a rank that interpolates, a rank that lands
+    exactly on an index, an input arriving out of order, and ties. The last one is the shape the
+    harness actually reports, n=2000 of a long-tailed distribution, where the two order statistics
+    p99 falls between are far enough apart that a nearest-rank estimator produces a different
+    number rather than the same one.
+
+    No signed zero anywhere in these. Python's sort leaves -0.0 and 0.0 in input order and
+    `std::sort` need not, so a vector holding both would compare bit patterns against an ordering
+    neither language promises.
+    """
+    rng = random.Random(PERCENTILE_SEED)
+    return [
+        ("single", [0.0039]),
+        ("pair", [0.0031, 0.0052]),
+        ("triple", [0.0031, 0.0044, 0.0052]),
+        ("unsorted", [0.9, 0.1, 0.5, 0.3, 0.7]),
+        ("ties", ([0.5] * 7) + ([1.5] * 3)),
+        ("wide", [-1.5, -0.25, 1e-9, 1.0, 1e9]),
+        ("n2000", [rng.lognormvariate(-1.0, 0.45) for _ in range(PERCENTILE_SAMPLE_COUNT)]),
+    ]
 
 
 def snap_cases() -> list[tuple[float, list[list[float]]]]:
@@ -351,6 +396,18 @@ def main() -> int:
     ]
     (here / "snap_to_grid.tsv").write_text("\n".join(snap_lines) + "\n")
 
+    # Blocks rather than one line per case: the n=2000 vector on a single line is 34 KB of hex
+    # that no diff can be read against.
+    percentile = load_percentile(args.infra)
+    percentile_lines: list[str] = []
+    for name, values in percentile_cases():
+        percentile_lines.append(f"vector\t{name}\t{len(values)}")
+        percentile_lines.extend(_bits(value) for value in values)
+        percentile_lines.extend(
+            f"p\t{_bits(p)}\t{_bits(percentile(values, p))}" for p in PERCENTILE_PROBABILITIES
+        )
+    (here / "percentiles.tsv").write_text("\n".join(percentile_lines) + "\n")
+
     revision = subprocess.run(
         ["git", "-C", str(args.infra), "rev-parse", "HEAD"],
         capture_output=True,
@@ -370,12 +427,16 @@ def main() -> int:
                 f"frames: {len(cases)}",
                 f"doubles: {len(lines)}",
                 f"snap_to_grid: {len(snap_lines)}",
+                f"percentile_vectors: {len(percentile_cases())}",
             ]
         )
         + "\n"
     )
 
-    print(f"wrote {len(cases)} frames, {len(lines)} doubles, {len(snap_lines)} snap cases")
+    print(
+        f"wrote {len(cases)} frames, {len(lines)} doubles, {len(snap_lines)} snap cases, "
+        f"{len(percentile_cases())} percentile vectors"
+    )
     return 0
 
 
