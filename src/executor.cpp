@@ -125,6 +125,14 @@ void ExecutorServer::stop() noexcept {
         const ssize_t written = ::write(wake_write_fd_, &byte, 1);
         static_cast<void>(written);
     }
+    // The pipe wakes `poll`, not a `read` sitting on the connection. A signal interrupts that
+    // read only if it lands while the read is in progress; one that lands between the flag check
+    // at the top of the loop and the read entering would leave the loop blocked until the peer
+    // spoke again. Shutting the socket down makes the read return whenever the signal landed.
+    const int fd = connection_fd_.load(std::memory_order_relaxed);
+    if (fd >= 0) {
+        ::shutdown(fd, SHUT_RDWR);
+    }
 }
 
 bool ExecutorServer::serve_one_connection() {
@@ -157,7 +165,9 @@ bool ExecutorServer::serve_one_connection() {
     const int on = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
 #endif
+    connection_fd_.store(fd, std::memory_order_relaxed);
     serve_connection(fd);
+    connection_fd_.store(-1, std::memory_order_relaxed);
     ::close(fd);
     return !stopping_.load(std::memory_order_relaxed);
 }

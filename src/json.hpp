@@ -35,6 +35,8 @@ inline constexpr std::size_t kDoubleBufferSize = 32;
 // fractional digit in fixed notation and never with one in scientific. The rule was derived by
 // observation against orjson 3.12.0 and is held there by `tests/golden/doubles.tsv`.
 //
+// NaN and the infinities are written as `null`, as orjson writes them.
+//
 // `out` must be at least `kDoubleBufferSize` long. Returns the number of bytes written.
 [[nodiscard]] std::size_t format_double(double value, std::span<char> out) noexcept;
 

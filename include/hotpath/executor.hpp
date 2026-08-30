@@ -87,7 +87,9 @@ public:
 
     void serve_forever();
 
-    // Wakes a blocked accept. Callable from a signal handler or another thread.
+    // Wakes a blocked accept, and shuts down the connection being served so a read blocked
+    // between wakes returns too. Callable from a signal handler or another thread: everything it
+    // does is an atomic store, a `write` and a `shutdown`.
     void stop() noexcept;
 
     [[nodiscard]] const ExecutorStats& stats() const noexcept { return stats_; }
@@ -109,6 +111,7 @@ private:
     int listen_fd_ = -1;
     int wake_read_fd_ = -1;
     int wake_write_fd_ = -1;
+    std::atomic<int> connection_fd_ = -1;
     std::atomic<bool> stopping_ = false;
 };
 

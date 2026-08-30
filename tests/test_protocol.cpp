@@ -196,8 +196,14 @@ TEST_CASE("price_ranges arity is fixed at decode", "[protocol]") {
     // at fire time, inside `_snap_to_grid`.
     CHECK_FALSE(decode(minimal_body(R"("price_ranges":[[0.0,1.0]])")).has_value());
     CHECK_FALSE(decode(minimal_body(R"("price_ranges":[[0.0,1.0,0.01,0.02]])")).has_value());
-    CHECK_FALSE(decode(minimal_body(R"("price_ranges":[[0.0,1.0,"x"]])")).has_value());
+    CHECK(decode(minimal_body(R"("price_ranges":[[0.0,1.0]])")).error().code ==
+          hotpath::DecodeErrorCode::MalformedPriceRange);
     CHECK(decode(minimal_body(R"("price_ranges":[])")).has_value());
+
+    // A bound of the wrong type is a type error, named as one, and not an arity error.
+    const auto wrong_type = decode(minimal_body(R"("price_ranges":[[0.0,1.0,"x"]])"));
+    REQUIRE_FALSE(wrong_type.has_value());
+    CHECK(wrong_type.error().code == hotpath::DecodeErrorCode::WrongType);
 }
 
 TEST_CASE("an empty price grid decodes to an empty vector and not to the default", "[protocol]") {

@@ -43,7 +43,7 @@ Checks: >
 
 WarningsAsErrors: '*'
 
-HeaderFilterRegex: '.*/(include|src|tests)/.*\.hpp$'
+HeaderFilterRegex: '.*/(include|src|tests|bench)/.*\.hpp$'
 ExcludeHeaderFilterRegex: '.*/_deps/.*'
 
 FormatStyle: file

@@ -138,8 +138,11 @@ std::optional<DecodeError> read_price_ranges(json::Reader& reader,
             if (!reader.next_element(has_bound)) {
                 return reader_error(reader);
             }
-            if (!has_bound || !reader.read_double(bound)) {
+            if (!has_bound) {
                 return price_range_arity_error();
+            }
+            if (!reader.read_double(bound)) {
+                return reader_error(reader);
             }
         }
         bool extra = false;

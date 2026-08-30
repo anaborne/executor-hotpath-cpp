@@ -345,6 +345,36 @@ TEST_CASE("an oversize length prefix closes the connection", "[executor]") {
     CHECK(harness.stats().frames_read == 0);
 }
 
+TEST_CASE("stop wakes a read blocked between wakes", "[executor]") {
+    // The SIGTERM path is `stop()` from a signal handler. A signal that lands while the read is
+    // in progress interrupts it; one that lands just before the read enters does not, and the
+    // pipe only wakes `poll`. The shutdown inside `stop()` covers both, so a connection that has
+    // gone quiet is not what keeps the process alive.
+    const std::filesystem::path socket_path = unique_socket_path("stop");
+    ExecutorServer server(ExecutorConfig{.socket_path = socket_path, .backlog = 4});
+    REQUIRE_FALSE(server.listen().has_value());
+
+    std::atomic<bool> returned{false};
+    const std::jthread worker([&server, &returned] {
+        static_cast<void>(server.serve_one_connection());
+        returned.store(true);
+    });
+
+    const int client = connect_to(socket_path);
+    // Long enough that the server is inside `read` on this connection when stop() is called.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    CHECK_FALSE(returned.load());
+
+    server.stop();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!returned.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(returned.load());
+    CHECK(read_frame(client).empty());
+    ::close(client);
+}
+
 TEST_CASE("the socket is owner-only", "[executor]") {
     const Harness harness("perms");
     struct stat info{};

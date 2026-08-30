@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <span>
 #include <string>
 
@@ -63,4 +64,10 @@ TEST_CASE("the notation boundaries are where orjson puts them", "[json]") {
     CHECK(format(1e-6) == "1e-6");
     CHECK(format(0.0) == "0.0");
     CHECK(format(-0.0) == "-0.0");
+}
+
+TEST_CASE("a value with no digits is null, as orjson writes it", "[json]") {
+    CHECK(format(std::numeric_limits<double>::quiet_NaN()) == "null");
+    CHECK(format(std::numeric_limits<double>::infinity()) == "null");
+    CHECK(format(-std::numeric_limits<double>::infinity()) == "null");
 }

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -60,6 +61,14 @@ void append_utf8(std::string& out, std::uint32_t code_point) {
 }  // namespace
 
 std::size_t format_double(double value, std::span<char> out) noexcept {
+    // orjson writes NaN and both infinities as `null`. No decoded frame can carry one, since the
+    // reader refuses the tokens, so this is reached only by a message constructed in C++.
+    if (!std::isfinite(value)) {
+        static constexpr std::string_view kNull = "null";
+        std::memcpy(out.data(), kNull.data(), kNull.size());
+        return kNull.size();
+    }
+
     std::array<char, 48> scientific{};
     const std::to_chars_result written =
         std::to_chars(scientific.data(), scientific.data() + scientific.size(), value,

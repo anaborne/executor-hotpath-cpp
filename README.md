@@ -34,8 +34,9 @@ them: five `WakeMessage` shapes, the v1 through v3 legacy frames, and both `Wake
 C++ suite asserts field-for-field equality against each, and the legacy three assert that every
 field added since arrives at its Python default, two of which are refusals rather than permissions.
 The rejection cases are separate, in `test_protocol.cpp` and `test_executor.cpp`: an oversize length
-prefix closes the connection, and a malformed body produces a `rejected` ack carrying the Python's
-own reason string.
+prefix closes the connection, and a malformed body produces a `rejected` ack whose reason names the
+field. The reason text is this port's own, where the Python sends `str(exc)`; the poller only logs
+it, and [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records the difference.
 
 The encoder is byte identical to `orjson.dumps` over `WakeMessage` and `WakeAck`. That is a stricter
 claim than valid JSON, because `orjson` serializes a dataclass in field-declaration order, so the
@@ -57,7 +58,12 @@ uv run --with orjson python tests/golden/generate_golden.py --infra ../predictio
 
 Nothing in CI regenerates the fixtures. They are committed, and changing one is a deliberate act
 with a diff to review. Regenerating against `prediction-market-infra` at `e3fd937` under Python
-3.14.7 reproduced all ten frames, all 1,000 doubles and all 424 snap cases byte for byte.
+3.14.7 reproduced all ten frames, all 1,000 doubles and all 424 snap cases byte for byte, and the
+same three fixtures regenerate identically under CPython 3.11 on x86-64 Linux. `percentiles.tsv` is
+the one that does not travel: its sample vectors come from `random.lognormvariate`, which goes
+through the platform's `exp`, and three of the 2,000 samples land one ulp apart between Apple's
+libm and glibc's. The percentile values the test asserts are unchanged by that, and the file is only
+ever regenerated on the machine that produced it.
 
 ## Results
 

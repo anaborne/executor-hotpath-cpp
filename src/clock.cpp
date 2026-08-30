@@ -21,8 +21,11 @@ std::string compute_clock_domain() {
         host[0] = '\0';
     }
 
-    // steady_clock is CLOCK_MONOTONIC on Linux and mach_absolute_time on macOS, which is what
-    // `time.monotonic()` reads on each, so wall minus uptime lands in the same bucket there.
+    // On Linux both steady_clock and `time.monotonic()` read CLOCK_MONOTONIC. On macOS libc++
+    // reads CLOCK_MONOTONIC_RAW and CPython reads mach_absolute_time; both start at boot, but
+    // only the first keeps counting through sleep, so a machine that has slept can land the two
+    // processes in different buckets. Nothing in this process subtracts a `recv_ns`, so on this
+    // side the token is carried and compared, never used to compute a span.
     const auto wall =
         std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
     const auto up =

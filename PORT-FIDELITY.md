@@ -32,7 +32,9 @@ shortest digit string that round-trips, laid out in fixed notation when the deci
 (`0.0`, `1000000000000000.0`) and never with one in scientific (`1e+16`, `1e-6`), with a signed
 exponent that is not zero padded. That rule was checked against 349,927 values, 200,000 of them
 random bit patterns, before any of this was written, and 1,000 of them are committed in
-`tests/golden/doubles.tsv` as IEEE-754 bits beside the string orjson produced.
+`tests/golden/doubles.tsv` as IEEE-754 bits beside the string orjson produced. NaN and the two
+infinities are written as `null`, which is orjson's output for them; no decoded frame can carry
+one, since the reader refuses those tokens, so only a message built in C++ reaches that branch.
 
 ## Where this decoder is stricter than Python's
 
@@ -102,7 +104,8 @@ ack ahead of the fire by making the dispatch callback block until the client has
 `_snap_to_grid` is matched including its rounding. Python's `round()` is half-to-even and
 `std::round` is half-away-from-zero, so `round_half_even` transcribes CPython's `float.__round__`
 for `ndigits=None`. 424 cases in `tests/golden/snap_to_grid.tsv` come from running that function
-out of `executor_server.py`, and moving the implementation to `std::round` fails ten of them.
+out of `executor_server.py`, and moving the implementation to `std::round` fails six of them, plus
+four of the tie assertions beside them in `tests/test_pricing.cpp`.
 
 Four differences, all of them shape rather than behaviour on a frame:
 
