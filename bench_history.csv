@@ -1,0 +1,6 @@
+timestamp_utc,platform,benchmark,n,warmup,p50_ms,p90_ms,p99_ms
+2026-08-30T06:46:16Z,Darwin-arm64-clang17.0.0,decode,2000,200,0.0016,0.0019,0.0019
+2026-08-30T06:46:16Z,Darwin-arm64-clang17.0.0,encode_ack,2000,200,0.0001,0.0002,0.0002
+2026-08-30T06:46:16Z,Darwin-arm64-clang17.0.0,sign,2000,200,0.3297,0.3348,0.4937
+2026-08-30T06:46:16Z,Darwin-arm64-clang17.0.0,roundtrip,2000,200,0.0078,0.0082,0.0107
+2026-08-30T06:46:16Z,Darwin-arm64-clang17.0.0,wake_recv,2000,200,0.0019,0.0020,0.0026

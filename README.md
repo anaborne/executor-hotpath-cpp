@@ -13,17 +13,35 @@ still trading. It is two implementations of one wire protocol, timed on one mach
 with `poller_client.py` driving both unchanged. What is not on offer is a production A/B, and no
 number here will be presented as one.
 
-## Status: the harness runs on both sides. No numbers reported yet.
+## Status: measured. The pre-registered expectation was wrong in both halves.
+
+[`BENCHMARK.md`](BENCHMARK.md) section 6 was written before any code existed and predicted that
+executor-side `wake_recv` would drop by roughly an order of magnitude and that end-to-end
+`wake_send` would barely move. Neither held. `wake_recv` dropped by 2.4x to 5.0x depending on the
+event loop and the percentile, and `wake_send` halved when the prediction was that it could not
+move at all, because the span does not contain the executor.
+
+A third measurement turned out not to compare what it was built to compare. The signer row is 2.8x
+in this port's favour and it is not a language result: `cryptography` bundles OpenSSL 4.0.2 and this
+port links Homebrew's OpenSSL 3.6.3, so the row compares two library builds. `openssl speed` against
+that Homebrew build reports 0.334ms per signature and this port measures 0.3297ms, meaning the C++
+wrapper costs nothing and contributes nothing to the gap.
+
+[`RESULTS.md`](RESULTS.md) has the tables, the confound between py-to-py being one process and
+py-to-cpp being two, and what would have to change for a cleaner answer.
+
+## What is here
 
 `WakeMessage`, `WakeAck`, the length-prefixed frame codec, a JSON layer written against orjson's
 output rather than against the JSON grammar alone, the executor server from `accept` to the point
 where the Python calls `dispatch()`, the telemetry path that carries `wake_recv` off that server
 and into SQLite, the Kalshi request signer, and the benchmark harness on both sides of the wire.
 
-No figure is reported anywhere in this repository yet. The run happens on one machine in one
-session and RESULTS.md is written the same day. [`BENCHMARK.md`](BENCHMARK.md) records what will be
-measured, how, and what is expected, written before any of it existed and corrected in place at the
-bottom rather than edited above.
+The Python poller drove the C++ executor across 4400 frames with no change to `poller_client.py`,
+every frame accepted and no telemetry row dropped. That was the protocol claim, and it holds.
+
+[`BENCHMARK.md`](BENCHMARK.md) records what would be measured, how, and what was expected, written
+before any of it existed and corrected at the bottom rather than edited above.
 
 The encoder is byte identical to `orjson.dumps` over these two dataclasses, and ten frames produced
 by running the Python itself hold it there. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records what is
