@@ -4,6 +4,7 @@ include(Catch)
 add_executable(hotpath_tests
     test_build_gate.cpp
     test_double_format.cpp
+    test_killswitch.cpp
     test_protocol.cpp
     test_protocol_golden.cpp
 )
