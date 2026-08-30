@@ -25,6 +25,8 @@ set(HOTPATH_SANITIZE "" CACHE STRING
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+find_package(SQLite3 REQUIRED)
+
 # Sanitizers are directory-wide and must be included before anything is added below, so that
 # Catch2 is instrumented too. A binary where only some translation units carry ASan's container
 # annotations reports container-overflow every time a std::vector crosses the boundary.

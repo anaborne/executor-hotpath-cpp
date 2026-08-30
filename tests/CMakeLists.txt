@@ -10,6 +10,7 @@ add_executable(hotpath_tests
     test_protocol.cpp
     test_protocol_golden.cpp
     test_spsc_ring.cpp
+    test_telemetry.cpp
 )
 
 # src/ is on the path because the JSON layer is internal to the library and tested directly. Its
@@ -28,6 +29,7 @@ target_link_libraries(hotpath_tests
         hotpath::core
         hotpath::warnings
         Catch2::Catch2WithMain
+        SQLite::SQLite3
 )
 
 # PRE_TEST rather than the default POST_BUILD. Discovery runs the freshly built binary, so under

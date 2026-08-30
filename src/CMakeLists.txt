@@ -6,6 +6,7 @@ add_library(hotpath_core STATIC
     orders.cpp
     pricing.cpp
     protocol.cpp
+    telemetry.cpp
     version.cpp
 )
 add_library(hotpath::core ALIAS hotpath_core)
@@ -15,7 +16,11 @@ target_include_directories(hotpath_core
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(hotpath_core PRIVATE hotpath::warnings)
+# The system SQLite rather than a vendored amalgamation. Every row this writes lands off the hot
+# path, after the span being measured has closed, so the library's version cannot move a benchmark
+# number, and building 250k lines of C on every clean checkout to pin one that cannot would buy
+# nothing.
+target_link_libraries(hotpath_core PRIVATE hotpath::warnings SQLite::SQLite3)
 
 add_executable(executor_hotpath main.cpp)
 target_link_libraries(executor_hotpath PRIVATE hotpath::core hotpath::warnings)
