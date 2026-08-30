@@ -1,11 +1,13 @@
 ---
 # Disabled checks, and why. The three cppcoreguidelines-pro-bounds and reinterpret-cast checks ban
-# the operations a wire-format reader is made of. The magic-number checks fire on the protocol's
-# own constants, the 4-byte length prefix and the 64 KiB cap, which are the specification and not
-# a smell. easily-swappable-parameters fires on every (const uint8_t* data, size_t len) signature.
-# trailing-return-type and identifier-length are style preferences that would rewrite the codebase.
-# avoid-pragma-once wants include guards; every compiler this builds on supports the pragma and
-# guards are a name collision waiting to happen.
+# the operations a wire-format reader is made of, and avoid-unchecked-container-access bans the
+# rest of them: it flags every operator[] and wants .at(), a bounds check and a throw path on every
+# byte of every frame, guarding indices the parser has already bounded itself. The magic-number
+# checks fire on the protocol's own constants, the 4-byte length prefix and the 64 KiB cap, which
+# the protocol specifies. easily-swappable-parameters fires on every
+# (const uint8_t* data, size_t len) signature. trailing-return-type and identifier-length are style
+# preferences that would rewrite the codebase. avoid-pragma-once wants include guards; every
+# compiler this builds on supports the pragma and guards are a name collision waiting to happen.
 Checks: >
   bugprone-*,
   cert-*,
@@ -22,6 +24,7 @@ Checks: >
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-avoid-non-const-global-variables,
   -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
   -cppcoreguidelines-pro-bounds-constant-array-index,
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,
   -cppcoreguidelines-pro-type-reinterpret-cast,

@@ -1,4 +1,6 @@
 add_library(hotpath_core STATIC
+    json.cpp
+    protocol.cpp
     version.cpp
 )
 add_library(hotpath::core ALIAS hotpath_core)
