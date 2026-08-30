@@ -158,5 +158,5 @@ jobs:
 
       - name: Tidy
         run: |
-          find src include tests -type f -name '*.cpp' -print0 \
+          find src include tests bench -type f -name '*.cpp' -print0 \
             | xargs -0 --no-run-if-empty clang-tidy -p build/dev --warnings-as-errors='*'
