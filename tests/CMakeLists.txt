@@ -2,6 +2,7 @@ list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
 
 add_executable(hotpath_tests
+    test_bench_poller_client.cpp
     test_build_gate.cpp
     test_double_format.cpp
     test_executor.cpp
