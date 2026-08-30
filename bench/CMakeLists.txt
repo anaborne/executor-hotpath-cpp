@@ -11,3 +11,9 @@ add_library(hotpath::bench_support ALIAS hotpath_bench_support)
 
 target_include_directories(hotpath_bench_support PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(hotpath_bench_support PUBLIC hotpath::core PRIVATE hotpath::warnings)
+
+if(HOTPATH_BUILD_BENCH)
+    add_executable(executor_hotpath_bench bench_main.cpp)
+    target_link_libraries(executor_hotpath_bench
+        PRIVATE hotpath::bench_support hotpath::warnings OpenSSL::Crypto)
+endif()
