@@ -27,6 +27,20 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 find_package(SQLite3 REQUIRED)
 
+# Apple stopped shipping OpenSSL headers and CMake does not look inside a keg-only Homebrew prefix
+# on its own, so on macOS a plain find_package reports nothing found with 3.6 sitting installed.
+if(APPLE AND NOT DEFINED OPENSSL_ROOT_DIR)
+    execute_process(COMMAND brew --prefix openssl@3
+                    OUTPUT_VARIABLE HOMEBREW_OPENSSL_PREFIX
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    if(HOMEBREW_OPENSSL_PREFIX)
+        set(OPENSSL_ROOT_DIR "${HOMEBREW_OPENSSL_PREFIX}")
+    endif()
+endif()
+
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+
 # Sanitizers are directory-wide and must be included before anything is added below, so that
 # Catch2 is instrumented too. A binary where only some translation units carry ASan's container
 # annotations reports container-overflow every time a std::vector crosses the boundary.

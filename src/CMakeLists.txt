@@ -6,6 +6,7 @@ add_library(hotpath_core STATIC
     orders.cpp
     pricing.cpp
     protocol.cpp
+    signer.cpp
     telemetry.cpp
     version.cpp
 )
@@ -20,7 +21,9 @@ target_include_directories(hotpath_core
 # path, after the span being measured has closed, so the library's version cannot move a benchmark
 # number, and building 250k lines of C on every clean checkout to pin one that cannot would buy
 # nothing.
-target_link_libraries(hotpath_core PRIVATE hotpath::warnings SQLite::SQLite3)
+# OpenSSL::Crypto only. libssl is the TLS record layer and nothing here opens a socket to Kalshi;
+# the signer needs EVP, PEM and the base64 encoder, all of which live in libcrypto.
+target_link_libraries(hotpath_core PRIVATE hotpath::warnings SQLite::SQLite3 OpenSSL::Crypto)
 
 add_executable(executor_hotpath main.cpp)
 target_link_libraries(executor_hotpath PRIVATE hotpath::core hotpath::warnings)
