@@ -3,6 +3,13 @@ include(Catch)
 
 add_executable(hotpath_tests
     test_build_gate.cpp
+    test_protocol_golden.cpp
+)
+
+# Read at run time rather than embedded, so regenerating a golden frame does not recompile the
+# suite and a diff on a frame file is a diff on the thing being asserted.
+target_compile_definitions(hotpath_tests
+    PRIVATE HOTPATH_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
 )
 
 target_link_libraries(hotpath_tests
