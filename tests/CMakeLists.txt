@@ -3,8 +3,15 @@ include(Catch)
 
 add_executable(hotpath_tests
     test_build_gate.cpp
+    test_double_format.cpp
+    test_protocol.cpp
     test_protocol_golden.cpp
 )
+
+# src/ is on the path because the JSON layer is internal to the library and tested directly. Its
+# contract is orjson's output, and asserting that through the protocol API alone would report a
+# formatting difference as a frame mismatch three layers up.
+target_include_directories(hotpath_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # Read at run time rather than embedded, so regenerating a golden frame does not recompile the
 # suite and a diff on a frame file is a diff on the thing being asserted.
