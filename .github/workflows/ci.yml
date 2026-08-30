@@ -37,15 +37,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install ninja and SQLite (Linux)
+      - name: Install ninja, SQLite and OpenSSL (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev
+          sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev libssl-dev
 
-      - name: Install ninja (macOS)
+      # openssl@3 is on the image already; naming it keeps the configure from depending on
+      # that staying true, and the root CMakeLists reads its prefix out of brew.
+      - name: Install ninja and OpenSSL (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: brew install ninja openssl@3
 
       - name: Report toolchain
         run: |
@@ -87,7 +89,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build clang llvm libsqlite3-dev
+          sudo apt-get install -y --no-install-recommends ninja-build clang llvm libsqlite3-dev libssl-dev
 
       - name: Locate llvm-symbolizer
         run: echo "ASAN_SYMBOLIZER_PATH=$(command -v llvm-symbolizer)" >> "$GITHUB_ENV"
@@ -124,10 +126,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install ninja and SQLite
+      - name: Install ninja, SQLite and OpenSSL
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev
+          sudo apt-get install -y --no-install-recommends ninja-build libsqlite3-dev libssl-dev
 
       - uses: actions/setup-python@v7
         with:
