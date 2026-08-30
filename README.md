@@ -5,22 +5,33 @@ The executor process from
 against the same wire protocol, so the Python poller can drive either one and the two can be timed
 against each other in the same run on the same machine.
 
-## Status: wire protocol. No server yet.
+## Status: protocol and server. No telemetry, no signer.
 
-`WakeMessage`, `WakeAck`, the length-prefixed frame codec, and a JSON layer written against orjson's
-output rather than against the JSON grammar alone. The server, the telemetry ring, and the signer
-are not written. [`BENCHMARK.md`](BENCHMARK.md) records what will be measured and what is expected,
-written before any of it exists.
+`WakeMessage`, `WakeAck`, the length-prefixed frame codec, a JSON layer written against orjson's
+output rather than against the JSON grammar alone, and the executor server from `accept` to the
+point where the Python calls `dispatch()`. The telemetry ring and the signer are not written.
+[`BENCHMARK.md`](BENCHMARK.md) records what will be measured and what is expected, written before
+any of it exists.
 
 The encoder is byte identical to `orjson.dumps` over these two dataclasses, and ten frames produced
 by running the Python itself hold it there. [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records what is
 identical, the six places this decoder is stricter than Python's, and the evidence behind each,
 because every one of those was observed by running the Python and not inferred from its source.
 
-The float formatting is the part worth knowing about. orjson writes shortest round-trip digits in
-fixed notation for a decimal exponent in [-5, 16) and scientific outside it, so `1e15` is
-`1000000000000000.0` and `1e16` is `1e+16`. A general-purpose C++ serializer agrees with neither.
-`tests/golden/doubles.tsv` pins 1,000 values against orjson's own output.
+orjson's float formatting is where a general-purpose C++ serializer differs. It writes shortest
+round-trip digits in fixed notation for a decimal exponent in [-5, 16) and scientific outside it, so
+`1e15` is `1000000000000000.0` and `1e16` is `1e+16`. `tests/golden/doubles.tsv` pins 1,000 values
+against orjson's own output.
+
+The server is one thread on one Unix domain socket, and the read loop runs in the Python's order:
+read the body, stamp, decode, ack, fire. The stamp comes after the read returns, since the read
+blocks until a frame arrives and a stamp taken ahead of it measures the gap between wakes. The ack
+goes out before the fire, so a dispatch never lands inside the span the poller measures. Price
+snapping matches Python's half-to-even `round()` against 424 cases the Python produced.
+
+```bash
+./build/dev/bin/executor_hotpath --socket /tmp/executor.sock --kill-switch /tmp/halt
+```
 
 ## Build
 

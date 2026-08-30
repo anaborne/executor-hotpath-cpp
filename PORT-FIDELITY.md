@@ -85,3 +85,34 @@ a test in `tests/test_protocol.cpp`:
   above U+10FFFF.
 - An unpaired surrogate escape is refused. A correct surrogate pair decodes to one code point.
 - A double that overflows to infinity is refused.
+
+## The executor server
+
+`ExecutorServer` ports `ipc/executor_server.py` as far as the point where that file calls
+`dispatch()`. The read loop's order is the Python's: read the body, stamp, decode, ack, fire. The
+stamp is taken after the read returns rather than before it, because the read blocks until a frame
+arrives and a stamp ahead of it measures the gap between wakes. `tests/test_executor.cpp` holds the
+ack ahead of the fire by making the dispatch callback block until the client has the ack.
+
+`_snap_to_grid` is matched including its rounding. Python's `round()` is half-to-even and
+`std::round` is half-away-from-zero, so `round_half_even` transcribes CPython's `float.__round__`
+for `ndigits=None`. 424 cases in `tests/golden/snap_to_grid.tsv` come from running that function
+out of `executor_server.py`, and moving the implementation to `std::round` fails ten of them.
+
+Four differences, all of them shape rather than behaviour on a frame:
+
+1. One connection at a time. The Python serves connections concurrently on the event loop. The
+   poller opens one, and the benchmark drives one wake at a time.
+2. A fire runs inline on the read loop, where the Python spawns `asyncio.create_task()` per fire so
+   a slow `dispatch()` never blocks the next read. The REST client here is the same fake
+   `benchmarks/latency_bench.py` uses, which returns without doing any work.
+3. The stale-socket unlink before bind is unguarded. The Python entry point holds a single-instance
+   `flock` before `serve_forever` runs, so the file it removes can only be a crashed executor's.
+   Two of these racing at the same path would each unlink the other's socket.
+4. A template missing from the prebuilt map is built and inserted at fire time rather than refused.
+   `build_template` validates its `outcome_side` against the same literal set the telemetry schema
+   enforces; `Direction` is an enum here and cannot hold anything else.
+
+Position sizing, the risk gate, the `orders_fired` and `latency_events` writes, and the dispatch
+itself are not ported. Sizing and the risk gate are outside this repository's scope, the telemetry
+ring is step 4, and the benchmark harness that fills `record_wake_recv` is step 6.
