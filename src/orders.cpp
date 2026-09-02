@@ -21,10 +21,6 @@ std::array<OrderTemplate, 2> both_sides(const std::string& ticker) {
 
 }  // namespace
 
-void OrderTemplates::prebuild(const std::string& ticker) {
-    by_ticker_.try_emplace(ticker, both_sides(ticker));
-}
-
 const OrderTemplate& OrderTemplates::acquire(const std::string& ticker, Direction side) {
     auto found = by_ticker_.find(ticker);
     if (found == by_ticker_.end()) {

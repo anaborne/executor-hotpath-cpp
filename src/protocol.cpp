@@ -103,12 +103,6 @@ constexpr std::uint32_t kWakeMessageRequiredMask =
 constexpr std::uint32_t kWakeAckRequiredMask =
     kSchemaVersionBit | kCorrelationIdBit | kReceivedAtMsBit | kStatusBit;
 
-// Every field reader returns the error, or nothing. The reader's own failure is folded in here so
-// the caller has one thing to check per member rather than two.
-std::optional<DecodeError> reader_error(const json::Reader& reader) {
-    return reader.error();
-}
-
 DecodeError price_range_arity_error() {
     return DecodeError{.code = DecodeErrorCode::MalformedPriceRange,
                        .message = "price_ranges entry is not [start, end, step]"};
@@ -118,36 +112,36 @@ std::optional<DecodeError> read_price_ranges(json::Reader& reader,
                                              std::vector<PriceRange>& ranges) {
     ranges.clear();
     if (!reader.begin_array()) {
-        return reader_error(reader);
+        return reader.error();
     }
     while (true) {
         bool has_entry = false;
         if (!reader.next_element(has_entry)) {
-            return reader_error(reader);
+            return reader.error();
         }
         if (!has_entry) {
             return std::nullopt;
         }
         if (!reader.begin_array()) {
-            return reader_error(reader);
+            return reader.error();
         }
 
         std::array<double, 3> bounds{};
         for (double& bound : bounds) {
             bool has_bound = false;
             if (!reader.next_element(has_bound)) {
-                return reader_error(reader);
+                return reader.error();
             }
             if (!has_bound) {
                 return price_range_arity_error();
             }
             if (!reader.read_double(bound)) {
-                return reader_error(reader);
+                return reader.error();
             }
         }
         bool extra = false;
         if (!reader.next_element(extra)) {
-            return reader_error(reader);
+            return reader.error();
         }
         if (extra) {
             return price_range_arity_error();
@@ -159,7 +153,7 @@ std::optional<DecodeError> read_price_ranges(json::Reader& reader,
 std::optional<DecodeError> read_direction(json::Reader& reader, Direction& direction) {
     std::string text;
     if (!reader.read_string(text)) {
-        return reader_error(reader);
+        return reader.error();
     }
     if (text == "yes") {
         direction = Direction::Yes;
@@ -177,7 +171,7 @@ std::optional<DecodeError> read_direction(json::Reader& reader, Direction& direc
 std::optional<DecodeError> read_status(json::Reader& reader, WakeAckStatus& status) {
     std::string text;
     if (!reader.read_string(text)) {
-        return reader_error(reader);
+        return reader.error();
     }
     if (text == "accepted") {
         status = WakeAckStatus::Accepted;
@@ -252,7 +246,10 @@ std::optional<DecodeError> read_wake_field(json::Reader& reader, std::string_vie
         return DecodeError{.code = DecodeErrorCode::UnknownField,
                            .message = "unexpected field: " + std::string(key)};
     }
-    return ok ? std::nullopt : reader_error(reader);
+    if (ok) {
+        return std::nullopt;
+    }
+    return reader.error();
 }
 
 std::optional<DecodeError> read_ack_field(json::Reader& reader, std::string_view key, WakeAck& ack,
@@ -285,7 +282,10 @@ std::optional<DecodeError> read_ack_field(json::Reader& reader, std::string_view
         return DecodeError{.code = DecodeErrorCode::UnknownField,
                            .message = "unexpected field: " + std::string(key)};
     }
-    return ok ? std::nullopt : reader_error(reader);
+    if (ok) {
+        return std::nullopt;
+    }
+    return reader.error();
 }
 
 }  // namespace

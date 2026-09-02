@@ -97,8 +97,6 @@ public:
     // Public because the fire path is worth testing without a socket in front of it.
     FireOutcome handle_fire(const WakeMessage& message);
 
-    [[nodiscard]] OrderTemplates& templates() noexcept { return templates_; }
-
 private:
     void serve_connection(int fd);
     bool send_frame(int fd, const std::vector<std::byte>& frame);

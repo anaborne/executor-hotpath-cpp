@@ -25,8 +25,6 @@ struct OrderTemplate {
 // across rehash, so a template handed to a dispatch outlives the next insert.
 class OrderTemplates {
 public:
-    void prebuild(const std::string& ticker);
-
     [[nodiscard]] const OrderTemplate& acquire(const std::string& ticker, Direction side);
 
     [[nodiscard]] std::size_t size() const noexcept { return by_ticker_.size(); }
