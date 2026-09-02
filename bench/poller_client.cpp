@@ -39,6 +39,18 @@ std::string syscall_error(const char* name) {
     return std::string(name) + ": " + std::generic_category().message(errno);
 }
 
+std::optional<std::string> read_exactly(int fd, std::byte* out, std::size_t count) {
+    std::size_t filled = 0;
+    while (filled < count) {
+        const ssize_t got = ::read(fd, out + filled, count - filled);
+        if (got <= 0) {
+            return got == 0 ? "executor closed the connection" : syscall_error("read");
+        }
+        filled += static_cast<std::size_t>(got);
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 PollerClient::PollerClient(std::filesystem::path socket_path)
@@ -106,13 +118,8 @@ std::optional<std::string> PollerClient::send_wake(const WakeMessage& message, W
     }
 
     std::array<std::byte, kFrameLengthBytes> prefix{};
-    std::size_t filled = 0;
-    while (filled < prefix.size()) {
-        const ssize_t got = ::read(fd_, prefix.data() + filled, prefix.size() - filled);
-        if (got <= 0) {
-            return got == 0 ? "executor closed the connection" : syscall_error("read");
-        }
-        filled += static_cast<std::size_t>(got);
+    if (std::optional<std::string> failure = read_exactly(fd_, prefix.data(), prefix.size())) {
+        return failure;
     }
 
     const Decoded<std::uint32_t> length = decode_frame_length(prefix);
@@ -121,13 +128,8 @@ std::optional<std::string> PollerClient::send_wake(const WakeMessage& message, W
     }
 
     body_.resize(length.value());
-    filled = 0;
-    while (filled < body_.size()) {
-        const ssize_t got = ::read(fd_, body_.data() + filled, body_.size() - filled);
-        if (got <= 0) {
-            return got == 0 ? "executor closed the connection" : syscall_error("read");
-        }
-        filled += static_cast<std::size_t>(got);
+    if (std::optional<std::string> failure = read_exactly(fd_, body_.data(), body_.size())) {
+        return failure;
     }
 
     const Decoded<WakeAck> decoded = decode_wake_ack(body_);
