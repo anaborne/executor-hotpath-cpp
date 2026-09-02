@@ -4,6 +4,6 @@
 
 namespace hotpath {
 
-[[nodiscard]] std::string_view version() noexcept;
+inline constexpr std::string_view kVersion = "0.1.0";
 
 }  // namespace hotpath

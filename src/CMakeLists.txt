@@ -8,7 +8,6 @@ add_library(hotpath_core STATIC
     protocol.cpp
     signer.cpp
     telemetry.cpp
-    version.cpp
 )
 add_library(hotpath::core ALIAS hotpath_core)
 

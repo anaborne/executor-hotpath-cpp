@@ -26,7 +26,8 @@ extern "C" void request_stop(int /*signal*/) {
 
 void usage() {
     static_cast<void>(std::fputs(
-        "usage: executor_hotpath --socket PATH [--kill-switch PATH] [--telemetry-db PATH]\n",
+        "usage: executor_hotpath --socket PATH [--kill-switch PATH] [--telemetry-db PATH]\n"
+        "       executor_hotpath --version\n",
         stderr));
 }
 
@@ -45,9 +46,9 @@ int run(std::span<char*> args) {
         } else if (flag == "--telemetry-db" && has_value) {
             telemetry_db_path = args[++i];
         } else if (flag == "--version") {
-            const std::string_view name = hotpath::version();
-            static_cast<void>(
-                std::printf("executor-hotpath %.*s\n", static_cast<int>(name.size()), name.data()));
+            static_cast<void>(std::printf("executor-hotpath %.*s\n",
+                                          static_cast<int>(hotpath::kVersion.size()),
+                                          hotpath::kVersion.data()));
             return 0;
         } else {
             usage();
