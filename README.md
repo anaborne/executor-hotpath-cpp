@@ -9,17 +9,17 @@ each other in the same run on the same machine.
 
 The Python poller drove this executor across 4400 frames with `poller_client.py` unmodified, every
 frame accepted and no telemetry row dropped. Executor-side `wake_recv` dropped by a factor of 2.4 at
-p99 and 2.8 at p50 under uvloop, 0.0045ms to 0.0016ms. The caveat is that the two configurations
-differ by more than language: the Python baseline runs the poller and the executor on one event loop
-and the C++ configuration spawns a second process, so every ratio here is an upper bound on what the
-rewrite bought. [`RESULTS.md`](RESULTS.md) is where those numbers live and it carries the confound
-in full.
+p99 and 2.8 at p50 under uvloop, 0.0045ms to 0.0016ms at p50. The caveat is that the two
+configurations differ by more than language: the Python baseline runs the poller and the executor on
+one event loop and the C++ configuration spawns a second process, so every ratio here is an upper
+bound on what the rewrite bought. [`RESULTS.md`](RESULTS.md) is where those numbers live and it
+carries the confound in full.
 
 The pre-registered expectation in [`BENCHMARK.md`](BENCHMARK.md) section 6 was written before any
 code existed, and it was wrong in both halves. It predicted `wake_recv` would fall by roughly an
-order of magnitude, and 2.4x to 2.8x is not that. It predicted end-to-end `wake_send` could not move
-because the span brackets the executor with Python work on both sides, and `wake_send` halved,
-because the span ends at `drain()` and never contained the executor at all.
+order of magnitude, and 2.4x at p99 and 2.8x at p50 is not that. It predicted end-to-end `wake_send`
+could not move because the span brackets the executor with Python work on both sides, and
+`wake_send` halved, because the span ends at `drain()` and never contained the executor at all.
 
 The Python side is a published reference implementation, not a running system.
 `prediction-market-infra` is an extraction from a private trading bot, and that bot was shut down on
@@ -83,10 +83,10 @@ because the executor does not know what is on the other end of the socket. The s
 1.6us and 1.9us across the two. The 0.3us spread is the resolution of this measurement at this
 scale, and any claim about `wake_recv` finer than "between 1 and 2 microseconds" is reading noise.
 
-Inside the C++ executor, `decode` measured standalone accounts for most of `wake_recv` and
-`encode_ack` for a small remainder, with the ack's `send` inside the difference. Both figures are
-rounded to 100ns and the two are separate measurements, so no percentage split should be read off
-them. The decoder is the only place with anything in it.
+Inside the C++ executor, `decode` measured standalone at 1.6us accounts for most of `wake_recv` at
+1.9us and `encode_ack` at 0.1us for a small remainder, with the ack's `send` inside the difference.
+Both figures are rounded to 100ns and the two are separate measurements, so no percentage split
+should be read off them. The decoder is the only place with anything in it.
 
 The signer, benchmarked in the same session, turned out not to compare what it was built to
 compare. That row is 2.8x in this port's favour and it is not a language result: `cryptography`

@@ -73,8 +73,9 @@ either process, so this is recorded rather than fixed.
 
 The encoder does not validate that the strings handed to it are UTF-8. orjson raises on a Python
 `str` holding an unpaired surrogate. Every string the executor puts on the wire is either its own
-ASCII or a `correlation_id` that came off a decoded frame, and decode validates, so the only way to
-reach this is to construct a `WakeMessage` in C++ with invalid UTF-8 and encode it.
+ASCII, a `correlation_id` that came off a decoded frame, or a field name off a decoded frame, and
+decode validates, so the only way to reach this is to construct a `WakeMessage` in C++ with invalid
+UTF-8 and encode it.
 
 ## Behaviours matched on purpose
 
