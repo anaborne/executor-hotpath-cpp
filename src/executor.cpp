@@ -200,7 +200,7 @@ void ExecutorServer::serve_connection(int fd) {
 
         // Stamped after the read returns, not before it. The read blocks until a frame arrives, so
         // a stamp taken ahead of it measures the gap between wakes rather than the cost of one. In
-        // the Python that mistake put `wake_recv` at 1181 ms against a sub-millisecond budget,
+        // the Python that mistake put `wake_recv` at 1186 ms against a sub-millisecond budget,
         // tracking wake inter-arrival time, and the burst-shaped benchmark never showed it.
         const std::int64_t started_at_ms = wall_clock_ms();
         const std::int64_t started_ns = monotonic_ns();

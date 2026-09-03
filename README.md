@@ -8,16 +8,16 @@ against the same wire protocol, so the Python poller drives either one and the t
 each other in the same run on the same machine.
 
 The Python poller drove this executor across 4400 frames with `poller_client.py` unmodified, every
-frame accepted and no telemetry row dropped. Executor-side `wake_recv` dropped by a factor of 2.4 to
-5.0 depending on the event loop and the percentile, 0.0045ms to 0.0016ms at p50 under uvloop. The
-caveat is that the two configurations differ by more than language: the Python baseline runs the
-poller and the executor on one event loop and the C++ configuration spawns a second process, so
-every ratio here is an upper bound on what the rewrite bought. [`RESULTS.md`](RESULTS.md) is where
-those numbers live and it carries the confound in full.
+frame accepted and no telemetry row dropped. Executor-side `wake_recv` dropped by a factor of 2.4 at
+p99 and 2.8 at p50 under uvloop, 0.0045ms to 0.0016ms. The caveat is that the two configurations
+differ by more than language: the Python baseline runs the poller and the executor on one event loop
+and the C++ configuration spawns a second process, so every ratio here is an upper bound on what the
+rewrite bought. [`RESULTS.md`](RESULTS.md) is where those numbers live and it carries the confound
+in full.
 
 The pre-registered expectation in [`BENCHMARK.md`](BENCHMARK.md) section 6 was written before any
 code existed, and it was wrong in both halves. It predicted `wake_recv` would fall by roughly an
-order of magnitude, and 2.4x to 5.0x is not that. It predicted end-to-end `wake_send` could not move
+order of magnitude, and 2.4x to 2.8x is not that. It predicted end-to-end `wake_send` could not move
 because the span brackets the executor with Python work on both sides, and `wake_send` halved,
 because the span ends at `drain()` and never contained the executor at all.
 
@@ -31,12 +31,14 @@ is a production A/B, and no number here will be presented as one.
 
 The frames the C++ is tested against were produced by running the Python, not by reading it. Ten of
 them: five `WakeMessage` shapes, the v1 through v3 legacy frames, and both `WakeAck` statuses. The
-C++ suite asserts field-for-field equality against each, and the legacy three assert that every
-field added since arrives at its Python default, two of which are refusals rather than permissions.
-The rejection cases are separate, in `test_protocol.cpp` and `test_executor.cpp`: an oversize length
+C++ suite asserts field-for-field equality against the five message shapes and the two acks. The v1
+frame asserts that every field added since arrives at its Python default, two of which are refusals
+rather than permissions; the v2 and v3 frames assert the fields added after each of them. The
+rejection cases are separate, in `test_protocol.cpp` and `test_executor.cpp`: an oversize length
 prefix closes the connection, and a malformed body produces a `rejected` ack whose reason names the
-field. The reason text is this port's own, where the Python sends `str(exc)`; the poller only logs
-it, and [`PORT-FIDELITY.md`](PORT-FIDELITY.md) records the difference.
+field when the failure is a missing or unexpected one, and names the parse error otherwise. The
+reason text is this port's own, where the Python sends `str(exc)`; the poller only logs it, and
+[`PORT-FIDELITY.md`](PORT-FIDELITY.md) records the difference.
 
 The encoder is byte identical to `orjson.dumps` over `WakeMessage` and `WakeAck`. That is a stricter
 claim than valid JSON, because `orjson` serializes a dataclass in field-declaration order, so the
@@ -77,13 +79,14 @@ n=2000 after 200 discarded warm-up iterations:
 | cpp-to-cpp | 0.0019 | 0.0020 | 0.0026 |
 
 Those bottom two rows are one executor measured from two different clients, and they should agree,
-because the executor does not know what is on the other end of the socket. Adding the asyncio-driven
-run, the same binary reports 1.2us, 1.6us and 1.9us across three clients. The 0.7us spread is the
-resolution of this measurement at this scale, and any claim about `wake_recv` finer than "between 1
-and 2 microseconds" is reading noise.
+because the executor does not know what is on the other end of the socket. The same binary reports
+1.6us and 1.9us across the two. The 0.3us spread is the resolution of this measurement at this
+scale, and any claim about `wake_recv` finer than "between 1 and 2 microseconds" is reading noise.
 
-Inside the C++ executor the span decomposes cleanly. `decode` is 84% of `wake_recv`, `encode_ack` is
-5%, and the remainder is the ack's `send`. The decoder is the only place with anything in it.
+Inside the C++ executor, `decode` measured standalone accounts for most of `wake_recv` and
+`encode_ack` for a small remainder, with the ack's `send` inside the difference. Both figures are
+rounded to 100ns and the two are separate measurements, so no percentage split should be read off
+them. The decoder is the only place with anything in it.
 
 The signer, benchmarked in the same session, turned out not to compare what it was built to
 compare. That row is 2.8x in this port's favour and it is not a language result: `cryptography`

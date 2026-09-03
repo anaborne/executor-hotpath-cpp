@@ -230,6 +230,54 @@ hotpath::WakeAck ack_from(const std::vector<std::byte>& body) {
     return decoded.value();
 }
 
+// The poller calls `orjson.loads` on the whole ack frame before it reaches the `reason` it logs,
+// so a rejected ack has to be valid UTF-8 even when the frame that caused it was not. Strict, the
+// way CPython's decoder is: an overlong form is refused, and so is any code point in the surrogate
+// range or past U+10FFFF.
+bool is_valid_utf8(std::span<const std::byte> body) {
+    std::size_t i = 0;
+    while (i < body.size()) {
+        const auto lead = static_cast<unsigned char>(body[i]);
+        if (lead < 0x80U) {
+            ++i;
+            continue;
+        }
+        std::size_t extra = 0;
+        std::uint32_t code_point = 0;
+        if ((lead & 0xE0U) == 0xC0U) {
+            extra = 1;
+            code_point = lead & 0x1FU;
+        } else if ((lead & 0xF0U) == 0xE0U) {
+            extra = 2;
+            code_point = lead & 0x0FU;
+        } else if ((lead & 0xF8U) == 0xF0U) {
+            extra = 3;
+            code_point = lead & 0x07U;
+        } else {
+            return false;
+        }
+        if (i + extra >= body.size()) {
+            return false;
+        }
+        for (std::size_t k = 1; k <= extra; ++k) {
+            const auto continuation = static_cast<unsigned char>(body[i + k]);
+            if ((continuation & 0xC0U) != 0x80U) {
+                return false;
+            }
+            code_point = (code_point << 6U) | (continuation & 0x3FU);
+        }
+        const bool overlong = (extra == 1 && code_point < 0x80U) ||
+                              (extra == 2 && code_point < 0x800U) ||
+                              (extra == 3 && code_point < 0x10000U);
+        if (overlong || (code_point >= 0xD800U && code_point <= 0xDFFFU) ||
+            code_point > 0x10FFFFU) {
+            return false;
+        }
+        i += extra + 1;
+    }
+    return true;
+}
+
 }  // namespace
 
 TEST_CASE("a wake is acked with its own correlation id and then fired", "[executor]") {
@@ -329,6 +377,37 @@ TEST_CASE("a frame that does not decode is rejected and the connection survives"
     // A rejected frame is not a wake_recv row in the Python either.
     CHECK(harness.wake_recv().size() == 1);
     CHECK(harness.fires().size() == 1);
+}
+
+// Three frames that make the decoder build a reason string out of a byte from the frame itself.
+// Each byte goes out as hex, so the ack stays decodable to a poller that only wanted to log the
+// reason.
+TEST_CASE("a rejected ack is valid UTF-8 when the frame that caused it is not", "[executor]") {
+    Harness harness("reject-utf8");
+    const int client = connect_to(harness.socket_path());
+
+    const std::array<std::string, 3> bodies{
+        std::string("{\"schema_version\":4\xff}"),
+        std::string("{\"asset\"\xc3:1}"),
+        std::string("{\"asset\":\"\\\xff\"}"),
+    };
+
+    for (const std::string& body : bodies) {
+        INFO(body);
+        send_all(client, frame_of(body));
+        const std::vector<std::byte> rejection = read_frame(client);
+        REQUIRE_FALSE(rejection.empty());
+        CHECK(is_valid_utf8(rejection));
+        const hotpath::WakeAck ack = ack_from(rejection);
+        CHECK(ack.status == hotpath::WakeAckStatus::Rejected);
+        CHECK_FALSE(ack.reason.value_or("").empty());
+    }
+
+    ::close(client);
+    harness.join_after_disconnect();
+
+    CHECK(harness.stats().acks_rejected == 3);
+    CHECK(harness.fires().empty());
 }
 
 TEST_CASE("an oversize length prefix closes the connection", "[executor]") {

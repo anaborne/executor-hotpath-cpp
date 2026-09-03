@@ -22,8 +22,9 @@ average was 1.2 at the start of the run rather than the sub-1.0 that was wanted.
 
 What stands in for the reboot is a repeat. The C++ benchmark was run twice back to back and the two
 runs agree: `sign` within 1.3%, `roundtrip` within 3.8%, `wake_recv` within 5.3%, `decode` within
-12.5% on an absolute difference of 200ns. Only the first run was written to the CSV. A reader can
-check that agreement; nobody can check an assertion that the machine was quiet.
+12.5% on an absolute difference of 200ns. Only the first run was written to the CSV, so the
+percentages above are the only record of the second; nobody can check them, and nobody can check an
+assertion that the machine was quiet either.
 
 ## The three configurations
 
@@ -64,17 +65,16 @@ such spans:
 Section 6 said: "Executor-side `wake_recv` drops by roughly an order of magnitude, and end-to-end
 `wake_send` barely moves."
 
-**`wake_recv` did not drop by an order of magnitude.** It dropped by a factor of 2.4 to 5.0
-depending on the event loop and the percentile: 2.4x at p99 under uvloop, 5.0x at p99 under stock
-asyncio. The prediction was off by roughly half in log terms, and it was off in the direction that
-flattered the port.
+**`wake_recv` did not drop by an order of magnitude.** It dropped by a factor of 2.4 at p99 and 2.8
+at p50 under uvloop. The prediction was off by roughly half in log terms, and it was off in the
+direction that flattered the port.
 
 There is a floor under this, and it is worth naming because it bounds how much better the number
-could get. The same C++ executor, measured three ways, reports `wake_recv` at 1.2us, 1.6us and
-1.9us: driven by the asyncio poller, by the uvloop poller, and by the C++ client. Those three
-should be identical, because the executor does not know what is on the other end of the socket.
-They differ by 0.7us, which is the resolution of this measurement at this scale. Any claim about
-`wake_recv` finer than "between 1 and 2 microseconds" is reading noise.
+could get. The same C++ executor, measured two ways, reports `wake_recv` at 1.6us and 1.9us: driven
+by the uvloop poller and by the C++ client. Those two should be identical, because the executor does
+not know what is on the other end of the socket. They differ by 0.3us, which is the resolution of
+this measurement at this scale. Any claim about `wake_recv` finer than "between 1 and 2
+microseconds" is reading noise.
 
 **`wake_send` moved, and it should not have.** It halved at p50, 0.0257 to 0.0123 under uvloop.
 Section 6 predicted it would barely move, and the reasoning given was that the span brackets the
@@ -136,9 +136,11 @@ comparable to any number in the `wake_send` column. PORT-FIDELITY.md carries the
 
 ## What the run does support
 
-Inside the C++ executor the span decomposes cleanly. `decode` at 1.6us is 84% of `wake_recv` at
-1.9us; `encode_ack` at 0.1us is 5%; the remainder is the ack's `send`. If the executor's half of
-the wire is ever worth optimizing further, the decoder is the only place with anything in it.
+Inside the C++ executor, `decode` measured standalone at 1.6us accounts for most of `wake_recv` at
+1.9us and `encode_ack` at 0.1us for a small remainder, with the ack's `send` inside the difference.
+Both figures are rounded to 100ns and the two are separate measurements, so no percentage split
+should be read off them. If the executor's half of the wire is ever worth optimizing further, the
+decoder is the only place with anything in it.
 
 `sign` moved 0.3% across the executor swap, 0.9227 to 0.9256. That is the control working. Signing
 lives in `rest_client.py`, past the `dispatch()` boundary, so it is in neither executor process and
@@ -162,7 +164,7 @@ three rows in `history.csv` from before 2026-08-30 are not comparable to anythin
    be separated from the process separation.
 2. Both signers against one OpenSSL build, or the `sign` row dropped as a cross-language comparison
    and kept only as a per-library note.
-3. A measurement floor better than 0.7us if `wake_recv` is ever to be reported more precisely than
+3. A measurement floor better than 0.3us if `wake_recv` is ever to be reported more precisely than
    an order of magnitude band.
 
 None of these change the protocol result, and none of them are done here.

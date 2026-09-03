@@ -26,7 +26,7 @@
 
 namespace hotpath::json {
 
-// Longest output `format_double` can produce is 25 bytes, from a 17-digit mantissa laid out in
+// Longest output `format_double` can produce is 24 bytes, from a 17-digit mantissa laid out in
 // fixed notation at the smallest exponent that still uses it.
 inline constexpr std::size_t kDoubleBufferSize = 32;
 

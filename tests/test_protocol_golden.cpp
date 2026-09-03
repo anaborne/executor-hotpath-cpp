@@ -204,6 +204,9 @@ TEST_CASE("a v2 frame decodes with an untradeable wire price", "[golden]") {
     CHECK(decoded.value().clock_domain == "host-a:1787290000");
     CHECK(decoded.value().wire_price_yes_dollars == 0.0);
     CHECK(decoded.value().exchange_index == -1);
+    CHECK(decoded.value().available_size_contracts == 0.0);
+    CHECK(decoded.value().price_ranges ==
+          std::vector<hotpath::PriceRange>{hotpath::kDefaultPriceRange});
     CHECK(decoded.value().correlation_group.empty());
 }
 

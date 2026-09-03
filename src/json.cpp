@@ -26,6 +26,15 @@ constexpr std::byte as_byte(char c) noexcept {
     return static_cast<std::byte>(static_cast<unsigned char>(c));
 }
 
+// A `DecodeError` message goes back out on the wire inside a rejected ack, and the frame that
+// produced it is not trusted to be UTF-8. A byte lifted out of one goes out as hex, because a raw
+// 0xFF spliced into the reason makes the whole ack undecodable to the poller.
+std::string hex_byte(char c) {
+    static constexpr std::string_view kByteHexDigits = "0123456789abcdef";
+    const auto value = static_cast<std::size_t>(static_cast<unsigned char>(c));
+    return std::string{kByteHexDigits[value >> 4U], kByteHexDigits[value & 0x0FU]};
+}
+
 // `std::string_view::compare(pos, ...)` throws when `pos` is past the end, which the parser never
 // does but the compiler cannot know, and one potentially-throwing call is enough to cost `at_null`
 // its noexcept.
@@ -251,7 +260,7 @@ bool Reader::expect(char c) {
     }
     if (seen != c) {
         return fail(DecodeErrorCode::MalformedJson,
-                    std::string("expected '") + c + "', got '" + seen + "'");
+                    std::string("expected '") + c + "', got byte 0x" + hex_byte(seen));
     }
     ++pos_;
     return true;
@@ -531,7 +540,8 @@ bool Reader::append_escape(std::string& out) {
         case 'u':
             return append_code_point(out);
         default:
-            return fail(DecodeErrorCode::MalformedJson, std::string("invalid escape: \\") + c);
+            return fail(DecodeErrorCode::MalformedJson,
+                        std::string("invalid escape: byte 0x") + hex_byte(c));
     }
 }
 
